@@ -1,0 +1,52 @@
+{
+  "folders": [
+    {
+      "path": ".",
+    },
+  ],
+  "settings": {
+    // Format on save
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+
+    // Python gets its own formatter
+    "[python]": {
+      "editor.defaultFormatter": "ms-python.python",
+    },
+
+    // C++ (PlatformIO manages this but good to have)
+    "[cpp]": {
+      "editor.defaultFormatter": "ms-vscode.cpptools",
+    },
+
+    // Prettier config
+    "prettier.singleQuote": true,
+    "prettier.semi": false,
+
+    // Hide noise from the file explorer
+    "files.exclude": {
+      "**/.pio": true,
+      "**/__pycache__": true,
+      "**/.git": true,
+      "**/node_modules": true,
+    },
+  },
+  "extensions": {
+    "recommendations": [
+      // Firmware
+      "platformio.platformio-ide",
+      // Vue 3
+      "vue.volar",
+      // Python
+      "ms-python.python",
+      "ms-python.pylance",
+      // Formatting & linting
+      "esbenp.prettier-vscode",
+      "dbaeumer.vscode-eslint",
+      // API testing
+      "humao.rest-client",
+      // Git
+      "eamodio.gitlens",
+    ],
+  },
+}
