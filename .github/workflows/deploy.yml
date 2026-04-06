@@ -39,6 +39,11 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            if [ ! -d /app/cardviewer ]; then
+              mkdir -p /app/cardviewer
+              git clone https://github.com/anthonysackman/cardviewer.git /app/cardviewer
+            fi
             cd /app/cardviewer
+            git pull
             docker compose -f companion/compose.yml pull
             docker compose -f companion/compose.yml up -d
