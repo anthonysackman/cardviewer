@@ -1,3 +1,4 @@
 sanic
 sanic-testing
 pytest
+sanic-redis

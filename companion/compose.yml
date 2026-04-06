@@ -8,6 +8,7 @@ services:
       - ./api:/app
     working_dir: /app
     environment:
+      - PYTHONPATH=/app
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=postgres
@@ -15,6 +16,7 @@ services:
       - POSTGRES_DB=postgres
     depends_on:
       - postgres
+      - redis
     networks:
       - app
 
@@ -56,8 +58,18 @@ services:
       - api
       - ui
 
+  redis:
+    image: redis:7-alpine
+    networks:
+      - app
+    volumes:
+      - redis_data:/data
+    ports:
+      - '6379:6379'
+
 volumes:
   postgres_data:
+  redis_data:
 
 networks:
   app:

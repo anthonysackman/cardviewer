@@ -1,4 +1,4 @@
 """Config for the Sanic application"""
 
 class SanicConfig:
-    REGISTER = True
+    REDIS_MAIN_URL = "redis://localhost:6379/0"
