@@ -34,13 +34,13 @@ def _build_display_proxy_url(request: ValidatedRequest, source_url: str) -> str:
 def _build_display_bw_proxy_url(request: ValidatedRequest, source_url: str) -> str:
     base = f"{request.scheme}://{request.host}"
     encoded = quote(source_url, safe="")
-    return f"{base}/api/scryfall/images/display_bw?src={encoded}&profile=auto"
+    return f"{base}/api/scryfall/images/display_bw?src={encoded}&profile=hybrid"
 
 
 def _build_display_bw_raw_proxy_url(request: ValidatedRequest, source_url: str) -> str:
     base = f"{request.scheme}://{request.host}"
     encoded = quote(source_url, safe="")
-    return f"{base}/api/scryfall/images/display_bw_raw?src={encoded}&profile=auto"
+    return f"{base}/api/scryfall/images/display_bw_raw?src={encoded}&profile=hybrid"
 
 
 def _is_allowed_source_url(source_url: str) -> bool:
@@ -96,8 +96,8 @@ async def get_display_image(request: ValidatedRequest) -> HTTPResponse:
 async def get_display_bw_image(request: ValidatedRequest) -> HTTPResponse:
     src = request.args.get("src")
     profile = request.args.get("profile", default="auto")
-    if profile not in {"auto", "photo", "text"}:
-        return json({"error": "validation_error", "detail": "profile must be auto|photo|text"}, status=400)
+    if profile not in {"auto", "hybrid", "photo", "text"}:
+        return json({"error": "validation_error", "detail": "profile must be auto|hybrid|photo|text"}, status=400)
     if not src:
         return json({"error": "validation_error", "detail": "missing src query parameter"}, status=400)
     if not _is_allowed_source_url(src):
@@ -118,8 +118,8 @@ async def get_display_bw_image(request: ValidatedRequest) -> HTTPResponse:
 async def get_display_bw_raw_image(request: ValidatedRequest) -> HTTPResponse:
     src = request.args.get("src")
     profile = request.args.get("profile", default="auto")
-    if profile not in {"auto", "photo", "text"}:
-        return json({"error": "validation_error", "detail": "profile must be auto|photo|text"}, status=400)
+    if profile not in {"auto", "hybrid", "photo", "text"}:
+        return json({"error": "validation_error", "detail": "profile must be auto|hybrid|photo|text"}, status=400)
     if not src:
         return json({"error": "validation_error", "detail": "missing src query parameter"}, status=400)
     if not _is_allowed_source_url(src):

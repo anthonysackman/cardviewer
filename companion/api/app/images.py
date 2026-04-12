@@ -100,6 +100,32 @@ def _edge_density(img: Image.Image) -> float:
     return strong / total if total else 0.0
 
 
+def _adaptive_tile_threshold(img: Image.Image, *, tile: int = 20, bias: int = 6) -> Image.Image:
+    """Local threshold by tiles (stable text rendering vs single global threshold)."""
+    w, h = img.size
+    out = Image.new("L", (w, h), color=255)
+    for y0 in range(0, h, tile):
+        for x0 in range(0, w, tile):
+            x1 = min(w, x0 + tile)
+            y1 = min(h, y0 + tile)
+            box = (x0, y0, x1, y1)
+            block = img.crop(box)
+            t = _otsu_threshold(block)
+            t = max(0, min(255, t + bias))
+            bw_block = block.point(lambda p, tt=t: 255 if p >= tt else 0, mode="L")
+            out.paste(bw_block, box)
+    return out.convert("1")
+
+
+def _card_content_bbox(img: Image.Image) -> tuple[int, int, int, int]:
+    """Estimate non-letterbox card bounds after contain() placement."""
+    mask = img.point(lambda p: 255 if p < 248 else 0, mode="1")
+    bbox = mask.getbbox()
+    if bbox is None:
+        return (0, 0, img.width, img.height)
+    return bbox
+
+
 def to_display_bw_jpeg(
     source_bytes: bytes,
     *,
@@ -138,13 +164,34 @@ def to_display_bw_image(
 
     if profile == "auto":
         # Text-heavy / high-edge cards tend to become snowy with diffusion dithering.
-        profile = "text" if _edge_density(tuned) > 0.16 else "photo"
+        profile = "hybrid"
 
     if profile == "photo":
         # Error diffusion preserves tones for painterly/low-contrast artwork.
         dither_enum = getattr(Image, "Dither", None)
         dither_mode = dither_enum.FLOYDSTEINBERG if dither_enum else Image.FLOYDSTEINBERG
         return tuned.convert("1", dither=dither_mode)
+
+    if profile == "hybrid":
+        # Deterministic mixed-content strategy:
+        # - start with local adaptive threshold for text stability
+        # - replace art window with Floyd dithering for smoother gradients
+        text_bw = _adaptive_tile_threshold(tuned, tile=18, bias=5).convert("L")
+        dither_enum = getattr(Image, "Dither", None)
+        dither_mode = dither_enum.FLOYDSTEINBERG if dither_enum else Image.FLOYDSTEINBERG
+        art_bw = tuned.convert("1", dither=dither_mode).convert("L")
+
+        x0, y0, x1, y1 = _card_content_bbox(base)
+        cw = max(1, x1 - x0)
+        ch = max(1, y1 - y0)
+        art_box = (
+            x0 + int(cw * 0.06),
+            y0 + int(ch * 0.15),
+            x0 + int(cw * 0.94),
+            y0 + int(ch * 0.58),
+        )
+        text_bw.paste(art_bw.crop(art_box), art_box)
+        return text_bw.convert("1")
 
     # Text profile: stable threshold with tiny denoise first to reduce peppering.
     denoised = tuned.filter(ImageFilter.MedianFilter(size=3))
