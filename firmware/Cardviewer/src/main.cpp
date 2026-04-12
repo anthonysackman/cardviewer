@@ -1,6 +1,7 @@
 #include <Arduino.h>
 
 #include <ctype.h>
+#include <limits.h>
 
 #include <ArduinoJson.h>
 
@@ -13,6 +14,7 @@
 
 #include <WiFi.h>
 #include <esp_task_wdt.h>
+#include <pgmspace.h>
 
 #include "HttpFetch.h"
 
@@ -37,6 +39,50 @@
 #endif
 
 
+
+// Set to 0 to disable [cv]/[card]/[epd] trace lines (heap + milestones). Unknown mana still logs once per card (page 0).
+
+#ifndef CARDVIEWER_DEBUG_TRACE
+
+#define CARDVIEWER_DEBUG_TRACE 1
+
+#endif
+
+
+
+#if CARDVIEWER_DEBUG_TRACE
+
+template <typename... Args>
+static inline void cv_log(const char *fmt, Args... args) {
+  Serial.printf(fmt, args...);
+  Serial.flush();
+}
+
+#define CV_LOG(...) cv_log(__VA_ARGS__)
+
+static inline void cv_trace(const char *tag) {
+  Serial.printf("[cv] %s heap=%u\n", tag, (unsigned)ESP.getFreeHeap());
+  Serial.flush();
+}
+
+#else
+
+#define CV_LOG(...) ((void)0)
+
+static inline void cv_trace(const char *) {}
+
+#endif
+
+
+
+static volatile int g_epdPageIndex = 0;
+
+#define MAX_MANA_TOK 24
+
+// Keep mana token strings off the drawCardScreen stack (default loop stack is 8KB; large String[] frames overflow).
+static String g_manaTok[MAX_MANA_TOK];
+static String g_manaGen[MAX_MANA_TOK];
+static String g_manaCol[MAX_MANA_TOK];
 
 constexpr int PIN_EPD_CS = 5;
 
@@ -89,6 +135,9 @@ static const int BODY_LINE_STEP = 14;
 
 static const int BLOCK_GAP = 6;
 
+// Tighter gap title -> mana row; extra gap after mana before type line (set in drawManaCostRow).
+static const int TITLE_TO_MANA_GAP = 2;
+
 // Footer block for set/collector (two lines, higher on panel than single-line-at-bottom)
 static const int FOOTER_BASELINE_0 = EPD_H - 46;
 
@@ -111,6 +160,10 @@ static uint8_t gArtBits[ART_ROW_BYTES * ART_H];
 
 static bool gArtDecoded = false;
 
+// JPEGDEC embeds a large JPEGIMAGE (~22KB). Placing it on the loop stack overflows
+// CONFIG_ARDUINO_LOOP_STACK_SIZE (16KB) and crashes (often LoadProhibited at 0x0).
+static JPEGDEC g_jpegDecoder;
+
 
 
 static float gScale = 1.0f;
@@ -118,6 +171,10 @@ static float gScale = 1.0f;
 static int gOffX = 0;
 
 static int gOffY = 0;
+
+static int gCbMaxX = 0;
+
+static int gCbMaxY = 0;
 
 
 
@@ -153,7 +210,22 @@ static int gYieldCtr = 0;
 
 static int jpegDrawCallback(JPEGDRAW *pDraw) {
 
+  if (!pDraw || !pDraw->pPixels) {
+
+    return 0;
+
+  }
+
   uint16_t *pix = pDraw->pPixels;
+
+  int blockMaxX = pDraw->x + pDraw->iWidth;
+  int blockMaxY = pDraw->y + pDraw->iHeight;
+  if (blockMaxX > gCbMaxX) {
+    gCbMaxX = blockMaxX;
+  }
+  if (blockMaxY > gCbMaxY) {
+    gCbMaxY = blockMaxY;
+  }
 
   for (int row = 0; row < pDraw->iHeight; row++) {
 
@@ -211,9 +283,21 @@ template <typename F> void drawPagedFull(F f) {
 
   display.firstPage();
 
+  int page = 0;
+
   do {
 
+    g_epdPageIndex = page;
+
+#if CARDVIEWER_DEBUG_TRACE
+
+    CV_LOG("[epd] page %d heap=%u\n", page, (unsigned)ESP.getFreeHeap());
+
+#endif
+
     f();
+
+    page++;
 
   } while (display.nextPage());
 
@@ -221,25 +305,121 @@ template <typename F> void drawPagedFull(F f) {
 
 
 
-static bool decodeJpegToArtPlane(uint8_t *data, size_t len) {
+static const char *jpegDecErrorName(int e) {
+  switch (e) {
+    case JPEG_SUCCESS:
+      return "SUCCESS";
+    case JPEG_INVALID_PARAMETER:
+      return "INVALID_PARAMETER";
+    case JPEG_DECODE_ERROR:
+      return "DECODE_ERROR";
+    case JPEG_UNSUPPORTED_FEATURE:
+      return "UNSUPPORTED_FEATURE";
+    case JPEG_INVALID_FILE:
+      return "INVALID_FILE";
+    case JPEG_ERROR_MEMORY:
+      return "ERROR_MEMORY";
+    default:
+      return "?";
+  }
+}
+
+// JPEGDEC DecodeJPEG() ORs JPEG_SCALE_EIGHTH only for SOF2 (progressive) images; callbacks
+// then use coordinates in (width/8)x(height/8) space. getJPEGType() usually matches, but the
+// static JPEGDEC instance can disagree with the current buffer; misclassifying baseline as
+// progressive applies 8x gScale to full-res coords -> sparse dot pattern. Misclassifying
+// progressive as baseline clips most pixels -> empty box. SOF in the buffer is authoritative.
+static bool jpegIsProgressiveSOF2(const uint8_t *d, size_t len) {
+  if (len < 4 || d[0] != 0xff || d[1] != 0xd8) {
+    return false;
+  }
+  size_t i = 2;
+  while (i + 3 < len && i < 4096) {
+    if (d[i] != 0xff) {
+      i++;
+      continue;
+    }
+    i++;
+    while (i < len && d[i] == 0xff) {
+      i++;
+    }
+    if (i >= len) {
+      break;
+    }
+    uint8_t m = d[i++];
+    if (m == 0xd8 || m == 0xd9) {
+      continue;
+    }
+    if (m >= 0xd0 && m <= 0xd7) {
+      continue;
+    }
+    if (i + 1 >= len) {
+      break;
+    }
+    uint16_t segLen = (uint16_t)((d[i] << 8) | d[i + 1]);
+    if (segLen < 2) {
+      return false;
+    }
+    if (m == 0xc2) {
+      return true;
+    }
+    if (m == 0xc0 || m == 0xc1) {
+      return false;
+    }
+    if (m == 0xda) {
+      // Start Of Scan — entropy data follows; SOF must appear before this. If we get here
+      // without returning from SOF, do not scan further (avoids false FF C2 in bitstream).
+      return false;
+    }
+    i += segLen;
+  }
+  return false;
+}
+
+static unsigned artPlaneBlackPixelCount() {
+  unsigned n = 0;
+  size_t nb = (size_t)ART_ROW_BYTES * ART_H;
+  for (size_t i = 0; i < nb; i++) {
+    n += (unsigned)__builtin_popcount((unsigned)gArtBits[i]);
+  }
+  return n;
+}
+
+// Returns true if decode succeeded (dr==1). Fills gArtBits on success.
+static bool decodeJpegToArtPlaneAttempt(uint8_t *data, size_t len, int progressiveMul, int pixelType, int *outIw,
+                                        int *outIh, int *outObsW, int *outObsH) {
 
   memset(gArtBits, 0, sizeof(gArtBits));
 
-  JPEGDEC jpeg;
+  JPEGDEC &jpeg = g_jpegDecoder;
 
   if (jpeg.openRAM(data, (int)len, jpegDrawCallback) != 1) {
+
+    unsigned b0 = (len >= 1 && data) ? data[0] : 0;
+
+    unsigned b1 = (len >= 2 && data) ? data[1] : 0;
+
+    unsigned b2 = (len >= 3 && data) ? data[2] : 0;
+
+    unsigned b3 = (len >= 4 && data) ? data[3] : 0;
+
+    CV_LOG("[art] openRAM failed len=%u err=%d %s magic=%02X%02X%02X%02X (JPEG FF D8 FF; PNG 89 50 4E 47)\n",
+
+           (unsigned)len, jpeg.getLastError(), jpegDecErrorName(jpeg.getLastError()), b0, b1, b2, b3);
 
     return false;
 
   }
 
-  jpeg.setPixelType(RGB565_BIG_ENDIAN);
+  jpeg.setPixelType(pixelType);
 
   int iw = jpeg.getWidth();
 
   int ih = jpeg.getHeight();
 
   if (iw <= 0 || ih <= 0) {
+
+    CV_LOG("[art] bad dimensions iw=%d ih=%d\n", iw, ih);
 
     jpeg.close();
 
@@ -251,23 +431,137 @@ static bool decodeJpegToArtPlane(uint8_t *data, size_t len) {
 
   float sy = (float)ART_H / (float)ih;
 
-  gScale = (sx < sy) ? sx : sy;
+  float baseScale = (sx < sy) ? sx : sy;
 
-  int dw = (int)((float)iw * gScale + 0.5f);
+  gScale = baseScale * (float)progressiveMul;
 
-  int dh = (int)((float)ih * gScale + 0.5f);
+  int dw = (int)((float)iw * baseScale + 0.5f);
+
+  int dh = (int)((float)ih * baseScale + 0.5f);
 
   gOffX = ART_X + (ART_W - dw) / 2;
 
   gOffY = ART_Y + (ART_H - dh) / 2;
 
   gYieldCtr = 0;
+  gCbMaxX = 0;
+  gCbMaxY = 0;
 
   int dr = jpeg.decode(0, 0, 0);
 
+  if (dr != 1) {
+
+    CV_LOG("[art] decode returned %d err=%d %s (expect 1)\n", dr, jpeg.getLastError(),
+
+           jpegDecErrorName(jpeg.getLastError()));
+
+  }
+
   jpeg.close();
 
+  if (outIw) {
+    *outIw = iw;
+  }
+  if (outIh) {
+    *outIh = ih;
+  }
+  if (outObsW) {
+    *outObsW = gCbMaxX;
+  }
+  if (outObsH) {
+    *outObsH = gCbMaxY;
+  }
+
   return dr == 1;
+
+}
+
+static bool decodeJpegToArtPlane(uint8_t *data, size_t len) {
+
+  // Try both scale multipliers and both RGB565 endianness values, then choose using
+  // callback geometry (observed block coords) + ink coverage. Runtime geometry is more
+  // reliable than static SOF probing across diverse JPEG metadata layouts.
+  const int mulA = 1;
+  const int mulB = 8;
+  const int ptBe = RGB565_BIG_ENDIAN;
+  const int ptLe = RGB565_LITTLE_ENDIAN;
+  const unsigned minBlack = 300u;
+  const int minCovPct = 30;
+  const int minWFrac = ART_W / 3;
+  const int minHFrac = ART_H / 3;
+
+  struct {
+    int mul;
+    int pt;
+    unsigned black;
+    int obsW;
+    int obsH;
+    int iw;
+    int ih;
+    int covPct;
+    bool mulMatch;
+    long score;
+  } best = {mulA, ptBe, 0u, 0, 0, 0, 0, 0, false, LONG_MIN};
+
+  bool anyDecodeOk = false;
+
+  const int orderMul[] = {mulA, mulB, mulA, mulB};
+  const int orderPt[] = {ptBe, ptBe, ptLe, ptLe};
+
+  for (int attempt = 0; attempt < 4; attempt++) {
+    int mul = orderMul[attempt];
+    int pt = orderPt[attempt];
+    int iw = 0;
+    int ih = 0;
+    int obsW = 0;
+    int obsH = 0;
+    if (!decodeJpegToArtPlaneAttempt(data, len, mul, pt, &iw, &ih, &obsW, &obsH)) {
+      continue;
+    }
+    anyDecodeOk = true;
+    unsigned n = artPlaneBlackPixelCount();
+    int covPct = (int)((100ull * n) / (unsigned long long)(ART_W * ART_H));
+    int inferredMul = 1;
+    if (obsW > 0 && obsH > 0 && iw > 0 && ih > 0) {
+      float rw = (float)iw / (float)obsW;
+      float rh = (float)ih / (float)obsH;
+      float ravg = (rw + rh) * 0.5f;
+      inferredMul = (ravg > 3.0f) ? 8 : 1;
+    }
+    bool mulMatch = (mul == inferredMul);
+    bool coverageOk = covPct >= minCovPct && n >= minBlack && obsW >= minWFrac && obsH >= minHFrac;
+    long score = (long)n + (long)covPct * 20L + (mulMatch ? 200000L : 0L) + (coverageOk ? 50000L : 0L);
+
+    CV_LOG("[art] attempt mul=%d inferred=%d %s black=%u cov=%d%% obs=%dx%d src=%dx%d score=%ld\n", mul,
+           inferredMul, (pt == ptBe) ? "RGB565_BE" : "RGB565_LE", n, covPct, obsW, obsH, iw, ih, score);
+
+    if (score > best.score) {
+      best.mul = mul;
+      best.pt = pt;
+      best.black = n;
+      best.obsW = obsW;
+      best.obsH = obsH;
+      best.iw = iw;
+      best.ih = ih;
+      best.covPct = covPct;
+      best.mulMatch = mulMatch;
+      best.score = score;
+    }
+  }
+
+  if (best.score > LONG_MIN) {
+    CV_LOG("[art] selected mul=%d %s black=%u cov=%d%% obs=%dx%d src=%dx%d mul_match=%d\n", best.mul,
+           (best.pt == ptBe) ? "RGB565_BE" : "RGB565_LE", best.black, best.covPct, best.obsW, best.obsH,
+           best.iw, best.ih, best.mulMatch ? 1 : 0);
+    return decodeJpegToArtPlaneAttempt(data, len, best.mul, best.pt, nullptr, nullptr, nullptr, nullptr);
+  }
+
+  if (anyDecodeOk) {
+    CV_LOG("[art] decode had no selectable best attempt\n");
+    return false;
+  }
+
+  return false;
 
 }
 
@@ -413,14 +707,6 @@ static String truncateToWidth(const String &s, int maxW) {
 
 
 
-#ifndef MAX_MANA_TOK
-
-#define MAX_MANA_TOK 24
-
-#endif
-
-
-
 static String manaInnerFromToken(const char *tok) {
 
   if (!tok || tok[0] != '{') {
@@ -509,45 +795,47 @@ static bool manaIsGenericInner(const String &inner) {
 
 
 
+static uint8_t g_manaBlitRam[MANA_BMP_BYTES];
+
 static void blitMana(const uint8_t *bmp, int x, int y) {
 
-  display.drawBitmap(x, y, bmp, MANA_BMP_W, MANA_BMP_H, GxEPD_BLACK);
+  memcpy_P(g_manaBlitRam, bmp, MANA_BMP_BYTES);
+
+  display.drawBitmap(x, y, g_manaBlitRam, MANA_BMP_W, MANA_BMP_H, GxEPD_BLACK);
 
 }
 
 
 
-static const uint8_t *manaColorSprite(char c) {
+// Scryfall cost letters -> terrain sprites: W Plains(P), U Island(I), B Swamp(S), R Mountain(M), G Forest(F), C.
+
+static const uint8_t *manaDispSpriteForScryfallLetter(char c) {
 
   switch ((char)toupper((unsigned char)c)) {
 
   case 'W':
 
-    return MANA_SPRITE_W;
+    return MANA_DISP_P;
 
   case 'U':
 
-    return MANA_SPRITE_U;
+    return MANA_DISP_I;
 
   case 'B':
 
-    return MANA_SPRITE_B;
+    return MANA_DISP_S;
 
   case 'R':
 
-    return MANA_SPRITE_R;
+    return MANA_DISP_M;
 
   case 'G':
 
-    return MANA_SPRITE_G;
+    return MANA_DISP_F;
 
   case 'C':
 
-    return MANA_SPRITE_C;
-
-  case 'S':
-
-    return MANA_SPRITE_S;
+    return MANA_DISP_C;
 
   default:
 
@@ -657,11 +945,11 @@ static const uint8_t *manaGenSprite(int n) {
 
 
 
-static void drawTextCenteredInPip(int cx, int cy, const String &s) {
+static void drawTextCenteredInPip(int cx, int cy, const String &s, uint8_t textSize = 1) {
 
   display.setFont(nullptr);
 
-  display.setTextSize(1);
+  display.setTextSize(textSize);
 
   display.setTextColor(GxEPD_BLACK);
 
@@ -683,6 +971,58 @@ static void drawTextCenteredInPip(int cx, int cy, const String &s) {
 
 
 
+// Map hybrid halves to terrain letters (S snow -> W glyph for display).
+
+static String manaHybridDisplayPart(const String &part) {
+
+  if (part.length() != 1) {
+
+    return part;
+
+  }
+
+  char c = (char)toupper((unsigned char)part[0]);
+
+  switch (c) {
+
+  case 'W':
+
+    return "P";
+
+  case 'U':
+
+    return "I";
+
+  case 'B':
+
+    return "S";
+
+  case 'R':
+
+    return "M";
+
+  case 'G':
+
+    return "F";
+
+  case 'C':
+
+    return "C";
+
+  case 'S':
+
+    return "W";
+
+  default:
+
+    return part;
+
+  }
+
+}
+
+
+
 static void drawManaHybridPip(int x, int y, const String &left, const String &right) {
 
   int cx = x + MANA_BMP_W / 2;
@@ -697,9 +1037,9 @@ static void drawManaHybridPip(int x, int y, const String &left, const String &ri
 
   display.drawLine(cx, cy - r, cx, cy + r, GxEPD_BLACK);
 
-  drawTextCenteredInPip(cx - r / 2, cy, left);
+  drawTextCenteredInPip(cx - r / 2, cy, manaHybridDisplayPart(left), 2);
 
-  drawTextCenteredInPip(cx + r / 2, cy, right);
+  drawTextCenteredInPip(cx + r / 2, cy, manaHybridDisplayPart(right), 2);
 
 }
 
@@ -765,11 +1105,19 @@ static bool drawOneManaPip(int x, int y, const String &full) {
 
     }
 
-    const uint8_t *col = manaColorSprite(c);
+    if (c == 'S') {
 
-    if (col) {
+      blitMana(MANA_DISP_SNOW, x, y);
 
-      blitMana(col, x, y);
+      return true;
+
+    }
+
+    const uint8_t *pip = manaDispSpriteForScryfallLetter(c);
+
+    if (pip) {
+
+      blitMana(pip, x, y);
 
       return true;
 
@@ -809,6 +1157,16 @@ static int drawManaCostRow(int colX, int yBaseline, const String *tok, int n, in
 
   }
 
+#if CARDVIEWER_DEBUG_TRACE
+
+  if (g_epdPageIndex == 0) {
+
+    CV_LOG("[mana] cost row n=%d nGeneric=%d heap=%u\n", n, nGeneric, (unsigned)ESP.getFreeHeap());
+
+  }
+
+#endif
+
   const int pipGap = 3;
 
   const int groupGap = 4;
@@ -823,7 +1181,9 @@ static int drawManaCostRow(int colX, int yBaseline, const String *tok, int n, in
 
   }
 
-  int yTop = yBaseline - 4;
+  const int MANA_PIP_LIFT = 16;
+
+  int yTop = yBaseline - MANA_PIP_LIFT;
 
   int cx = colX;
 
@@ -855,7 +1215,13 @@ static int drawManaCostRow(int colX, int yBaseline, const String *tok, int n, in
 
     } else {
 
-      Serial.printf("[mana] unknown symbol: %s\n", tok[i].c_str());
+      if (g_epdPageIndex == 0) {
+
+        Serial.printf("[mana] unknown symbol: %s\n", tok[i].c_str());
+
+        Serial.flush();
+
+      }
 
       unknownRaw += tok[i];
 
@@ -863,11 +1229,13 @@ static int drawManaCostRow(int colX, int yBaseline, const String *tok, int n, in
 
   }
 
+  const int MANA_GAP_AFTER_ROW = BLOCK_GAP + 8;
+
   int yNext = yBaseline;
 
   if (drawn > 0) {
 
-    yNext = yBaseline + BODY_LINE_STEP + BLOCK_GAP;
+    yNext = yTop + MANA_BMP_H + MANA_GAP_AFTER_ROW;
 
   }
 
@@ -879,11 +1247,13 @@ static int drawManaCostRow(int colX, int yBaseline, const String *tok, int n, in
 
     String show = truncateToWidth(unknownRaw, COL_TEXT_W);
 
-    display.setCursor(colX, yNext);
+    int yRaw = (drawn > 0) ? yNext : yBaseline;
+
+    display.setCursor(colX, yRaw);
 
     display.print(show.c_str());
 
-    yNext += BODY_LINE_STEP + BLOCK_GAP;
+    yNext = yRaw + BODY_LINE_STEP + BLOCK_GAP;
 
   }
 
@@ -901,12 +1271,22 @@ static int drawManaCostRow(int colX, int yBaseline, const String *tok, int n, in
 
 void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen) {
 
+  CV_LOG("[card] enter img=%p len=%u json_len=%u heap=%u\n", imgData, (unsigned)imgLen, (unsigned)json.length(),
+
+         (unsigned)ESP.getFreeHeap());
+
   gArtDecoded = false;
 
   if (imgData && imgLen > 0) {
     gArtDecoded = decodeJpegToArtPlane(imgData, imgLen);
     free(imgData);
+  } else {
+
+    CV_LOG("[card] skip art decode (no buffer or len=0)\n");
+
   }
+
+  CV_LOG("[card] after art decode decoded=%d heap=%u\n", gArtDecoded ? 1 : 0, (unsigned)ESP.getFreeHeap());
 
   JsonDocument doc;
 
@@ -932,7 +1312,7 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen) {
 
   }
 
-
+  cv_trace("json parsed");
 
   JsonObject panel = doc["panel"];
 
@@ -968,17 +1348,11 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen) {
 
   }
 
-  String manaTok[MAX_MANA_TOK];
-
   int nMana = 0;
 
   int nManaGeneric = 0;
 
   {
-
-    String gen[MAX_MANA_TOK];
-
-    String col[MAX_MANA_TOK];
 
     int ng = 0;
 
@@ -1012,7 +1386,7 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen) {
 
           if (ng < MAX_MANA_TOK) {
 
-            gen[ng++] = t;
+            g_manaGen[ng++] = t;
 
           }
 
@@ -1020,7 +1394,7 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen) {
 
           if (nc < MAX_MANA_TOK) {
 
-            col[nc++] = t;
+            g_manaCol[nc++] = t;
 
           }
 
@@ -1032,7 +1406,7 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen) {
 
     for (int i = 0; i < ng; i++) {
 
-      manaTok[nMana++] = gen[i];
+      g_manaTok[nMana++] = g_manaGen[i];
 
     }
 
@@ -1040,13 +1414,15 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen) {
 
     for (int i = 0; i < nc; i++) {
 
-      manaTok[nMana++] = col[i];
+      g_manaTok[nMana++] = g_manaCol[i];
 
     }
 
   }
 
+  CV_LOG("[card] before paged draw nMana=%d nManaGeneric=%d heap=%u\n", nMana, nManaGeneric,
 
+         (unsigned)ESP.getFreeHeap());
 
   drawPagedFull([&] {
 
@@ -1084,7 +1460,7 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen) {
 
                            TITLE_MAX_LINES, BODY_BASELINE_MAX, &FreeSansBold12pt7b);
 
-    y += BLOCK_GAP;
+    y += TITLE_TO_MANA_GAP;
 
 
 
@@ -1092,7 +1468,7 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen) {
 
     if (nMana > 0) {
 
-      y = drawManaCostRow(COL_X, y, manaTok, nMana, nManaGeneric);
+      y = drawManaCostRow(COL_X, y, g_manaTok, nMana, nManaGeneric);
 
     }
 
@@ -1151,19 +1527,38 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen) {
 
 
 // Compact ``image`` mirrors Scryfall ``image_uris`` keys. Prefer full frame for the panel JPEG.
-static const char *pickCardImageUrl(JsonVariant imgNode) {
+static const char *pickCardImageUrl(JsonVariant imgNode, const char **outKey) {
+  if (outKey) {
+    *outKey = nullptr;
+  }
   if (!imgNode.is<JsonObject>()) {
     return nullptr;
   }
   JsonObject img = imgNode.as<JsonObject>();
-  static const char *const keys[] = {"normal", "png", "small", "large", "art_crop", "border_crop"};
+  static const char *const keys[] = {"display", "normal", "large", "png", "small", "art_crop", "border_crop"};
   for (const char *k : keys) {
     const char *u = img[k].as<const char *>();
     if (u && u[0]) {
+      if (outKey) {
+        *outKey = k;
+      }
       return u;
     }
   }
   return nullptr;
+}
+
+static void cv_log_url_trunc(const char *prefix, const char *url) {
+  if (!url || !url[0]) {
+    CV_LOG("%s (empty)\n", prefix);
+    return;
+  }
+  size_t n = strlen(url);
+  if (n <= 100) {
+    CV_LOG("%s %s\n", prefix, url);
+  } else {
+    CV_LOG("%s %.48s...%s\n", prefix, url, url + n - 45);
+  }
 }
 
 static void fetchAndDrawCard() {
@@ -1202,6 +1597,8 @@ static void fetchAndDrawCard() {
 
   String json = httpGetString(url);
 
+  CV_LOG("[fetch] GET /scryfall/... compact len=%u heap=%u\n", (unsigned)json.length(), (unsigned)ESP.getFreeHeap());
+
   uint8_t *imgBuf = nullptr;
 
   size_t imgLen = 0;
@@ -1216,13 +1613,53 @@ static void fetchAndDrawCard() {
 
     if (!je) {
 
-      const char *imgUrl = pickCardImageUrl(doc["image"]);
+      const char *pickedKey = nullptr;
+
+      const char *imgUrl = pickCardImageUrl(doc["image"], &pickedKey);
 
       if (imgUrl && strlen(imgUrl) > 0) {
 
-        httpGetBinary(String(imgUrl), &imgBuf, &imgLen);
+        if (pickedKey) {
+
+          CV_LOG("[fetch] image key=%s\n", pickedKey);
+
+        }
+
+        cv_log_url_trunc("[fetch] art URL", imgUrl);
+
+        bool artOk = httpGetBinary(String(imgUrl), &imgBuf, &imgLen);
+
+        if (!artOk) {
+
+          CV_LOG("[fetch] art GET binary failed (non-200, stream, or OOM) heap=%u\n",
+
+                 (unsigned)ESP.getFreeHeap());
+
+        } else {
+
+          unsigned m0 = imgLen >= 1 && imgBuf ? imgBuf[0] : 0;
+
+          unsigned m1 = imgLen >= 2 && imgBuf ? imgBuf[1] : 0;
+
+          unsigned m2 = imgLen >= 3 && imgBuf ? imgBuf[2] : 0;
+
+          unsigned m3 = imgLen >= 4 && imgBuf ? imgBuf[3] : 0;
+
+          CV_LOG("[fetch] art GET ok bytes=%u magic=%02X%02X%02X%02X heap=%u\n", (unsigned)imgLen, m0, m1, m2, m3,
+
+                 (unsigned)ESP.getFreeHeap());
+
+        }
+
+      } else {
+
+        CV_LOG("[fetch] no image URL (compact JSON missing image or empty keys)\n");
 
       }
+
+    } else {
+
+      CV_LOG("[fetch] compact JSON parse error: %s\n", je.c_str());
 
     }
 
@@ -1251,6 +1688,8 @@ static void fetchAndDrawCard() {
     });
 
   } else {
+
+    cv_trace("fetch ok, drawCardScreen");
 
     drawCardScreen(json, imgBuf, imgLen);
   }

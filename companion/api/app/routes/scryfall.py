@@ -1,15 +1,42 @@
-from typing import cast
+from typing import Any, cast
+from urllib.parse import quote, urlparse
 
 from sanic import Blueprint
-from sanic.response import HTTPResponse, json
+from sanic.response import HTTPResponse, json, raw
 
 from app.constants import ResponseFormat
+from app.images import to_display_jpeg
 from app.request import ValidatedRequest
 from app.schemas.queries import RandomCardQuery
 from app.serializers.compact_card import scryfall_card_to_compact
 from app.validation.decorators import validate_query
 
 skryfall_bp = Blueprint("scryfall", url_prefix="/scryfall")
+
+
+def _pick_display_source(image: dict[str, Any]) -> str | None:
+    for key in ("normal", "large", "png", "small", "art_crop", "border_crop"):
+        val = image.get(key)
+        if isinstance(val, str) and val:
+            return val
+    return None
+
+
+def _build_display_proxy_url(request: ValidatedRequest, source_url: str) -> str:
+    base = f"{request.scheme}://{request.host}"
+    encoded = quote(source_url, safe="")
+    return f"{base}/scryfall/images/display?src={encoded}"
+
+
+def _is_allowed_source_url(source_url: str) -> bool:
+    try:
+        parsed = urlparse(source_url)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"https"}:
+        return False
+    host = (parsed.hostname or "").lower()
+    return bool(host) and host.endswith("scryfall.io")
 
 
 @skryfall_bp.get("/cards/random")
@@ -19,5 +46,30 @@ async def get_random_card(request: ValidatedRequest) -> HTTPResponse:
     card = await scryfall_client.get_random_card()
     query = cast(RandomCardQuery, request.validated_data)
     if query.format is ResponseFormat.COMPACT:
-        return json(scryfall_card_to_compact(card))
+        compact = scryfall_card_to_compact(card)
+        image_obj = compact.get("image")
+        if isinstance(image_obj, dict) and image_obj.get("status") == "ok":
+            src = _pick_display_source(image_obj)
+            if src:
+                image_obj["display"] = _build_display_proxy_url(request, src)
+        return json(compact)
     return json({"card": card})
+
+
+@skryfall_bp.get("/images/display")
+async def get_display_image(request: ValidatedRequest) -> HTTPResponse:
+    src = request.args.get("src")
+    if not src:
+        return json({"error": "validation_error", "detail": "missing src query parameter"}, status=400)
+    if not _is_allowed_source_url(src):
+        return json({"error": "validation_error", "detail": "src must be an https://*.scryfall.io URL"}, status=400)
+
+    scryfall_client = request.app.ctx.scryfall_client
+    try:
+        source = await scryfall_client.get_binary(src)
+        display_bytes = to_display_jpeg(source)
+    except Exception:
+        return json({"error": "upstream_error", "detail": "unable to fetch or transform image"}, status=502)
+
+    headers = {"Cache-Control": "public, max-age=86400"}
+    return raw(display_bytes, content_type="image/jpeg", headers=headers)
