@@ -18,7 +18,7 @@ def test_random_compact_format():
     assert j["panel"]["name"] == "Sky Ruin Drake"
     assert j["panel"]["mana_symbols"] == ["{4}", "{U}"]
     assert j["image"]["status"] == "ok"
-    assert "/scryfall/images/display?src=" in j["image"]["display"]
+    assert "/api/scryfall/images/display?src=" in j["image"]["display"]
 
 
 def test_random_default_wraps_card():

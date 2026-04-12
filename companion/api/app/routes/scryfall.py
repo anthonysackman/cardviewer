@@ -25,7 +25,9 @@ def _pick_display_source(image: dict[str, Any]) -> str | None:
 def _build_display_proxy_url(request: ValidatedRequest, source_url: str) -> str:
     base = f"{request.scheme}://{request.host}"
     encoded = quote(source_url, safe="")
-    return f"{base}/scryfall/images/display?src={encoded}"
+    # App is typically published behind nginx at /api/* (proxy strips prefix before Sanic).
+    # Emit the public URL so firmware can fetch through the same origin path.
+    return f"{base}/api/scryfall/images/display?src={encoded}"
 
 
 def _is_allowed_source_url(source_url: str) -> bool:

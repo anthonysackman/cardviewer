@@ -39,7 +39,9 @@ services:
       postgres:
         condition: service_healthy
       migrate:
-        condition: service_completed_successfully
+        # Migrations are executed by a one-shot job. API can still start if that job
+        # exits non-zero (manual intervention may still be needed for DB-only features).
+        condition: service_started
       redis:
         condition: service_started
     networks:
