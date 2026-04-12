@@ -19,18 +19,37 @@ def _panel_field(panel: dict[str, Any], key: str, value: Any) -> None:
     panel[key] = value
 
 
-def scryfall_card_to_compact(raw: dict) -> dict[str, Any]:
-    """Map a Scryfall Card JSON object to compact ``schema`` / ``image`` / ``panel``."""
-    image_uris = raw.get("image_uris")
-    if isinstance(image_uris, dict):
-        art_crop = image_uris.get("art_crop")
-    else:
-        art_crop = None
+def _resolve_image_uris(raw: dict) -> dict[str, str] | None:
+    """Scryfall: single-face cards use ``image_uris``; double-faced use ``card_faces[].image_uris``."""
+    top = raw.get("image_uris")
+    if isinstance(top, dict) and top:
+        return {str(k): str(v) for k, v in top.items() if isinstance(v, str)}
+    faces = raw.get("card_faces")
+    if isinstance(faces, list):
+        for face in faces:
+            if not isinstance(face, dict):
+                continue
+            u = face.get("image_uris")
+            if isinstance(u, dict) and u:
+                return {str(k): str(v) for k, v in u.items() if isinstance(v, str)}
+    return None
 
-    if art_crop:
-        image: dict[str, Any] = {"status": "ok", "art_crop": art_crop}
+
+def scryfall_card_to_compact(raw: dict) -> dict[str, Any]:
+    """Map a Scryfall Card JSON object to compact ``schema`` / ``image`` / ``panel``.
+
+    ``panel`` holds display text (name, types, oracle, P/T, set line, etc.).
+
+    ``image`` includes ``status`` and, when present, the same URL keys Scryfall uses under
+    ``image_uris``: ``small``, ``normal``, ``large``, ``png``, ``art_crop``, ``border_crop``.
+    Clients can pick one (e.g. ``normal`` or ``png`` for full frame; ``art_crop`` for square art).
+    """
+    uris = _resolve_image_uris(raw)
+
+    if not uris:
+        image: dict[str, Any] = {"status": "missing"}
     else:
-        image = {"status": "missing"}
+        image = {"status": "ok", **uris}
 
     panel: dict[str, Any] = {
         "name": raw["name"],

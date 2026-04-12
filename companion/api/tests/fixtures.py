@@ -21,6 +21,11 @@ SKY_RUIN_CARD = {
     "collector_number": "66",
     "flavor_text": "Hold up.",
     "image_uris": {
+        "small": "https://cards.scryfall.io/small/front/x.jpg",
+        "normal": "https://cards.scryfall.io/normal/front/x.jpg",
+        "large": "https://cards.scryfall.io/large/front/x.jpg",
+        "png": "https://cards.scryfall.io/png/front/x.png",
         "art_crop": "https://cards.scryfall.io/art_crop/front/x.jpg",
+        "border_crop": "https://cards.scryfall.io/border_crop/front/x.jpg",
     },
 }

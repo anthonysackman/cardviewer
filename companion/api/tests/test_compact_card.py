@@ -9,6 +9,9 @@ def test_compact_sky_ruin_drake():
     assert c["id"] == "2bdb5850-df1e-4d8a-af7a-15cab080fb8f"
     assert c["layout"] == "normal"
     assert c["image"]["status"] == "ok"
+    assert c["image"]["normal"].endswith(".jpg")
+    assert c["image"]["small"].endswith(".jpg")
+    assert c["image"]["png"].endswith(".png")
     assert c["image"]["art_crop"].endswith(".jpg")
     p = c["panel"]
     assert p["name"] == "Sky Ruin Drake"
