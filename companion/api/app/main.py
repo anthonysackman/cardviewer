@@ -2,6 +2,8 @@ from sanic import Sanic
 from config import SanicConfig
 from app.routes import ping_bp
 from sanic_redis import SanicRedis
+from app.routes.scryfall import skryfall_bp
+from app.clients.scryfall import ScryfallClient
 
 def create_app(config: SanicConfig = SanicConfig) -> Sanic:
     app = Sanic("Cardviewer_API")
@@ -9,8 +11,11 @@ def create_app(config: SanicConfig = SanicConfig) -> Sanic:
     # Update Configuration
     app.update_config(config)
     
+    # Initialize Clients
+    app = initialize_clients(app)
+    
     # Register Blueprints
-    app.blueprint(ping_bp)
+    app.blueprints(ping_bp, skryfall_bp)
     
     # Initialize Redis
     redis_main = SanicRedis(config_name="REDIS_MAIN_URL")
@@ -22,3 +27,9 @@ app = create_app()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
+
+
+def initialize_clients(app: Sanic) -> Sanic:
+    scryfall_client = ScryfallClient()
+    app.ctx.scryfall_client = scryfall_client
+    return app
