@@ -122,3 +122,9 @@ Single-row app config table.
 - `settings` is always a single row (id=1), use upsert
 - `set_name` on `cards` is denormalized; authoritative set metadata lives in `sets`
 - Migrations: Docker Compose runs the `migrate` service (`alembic upgrade head`) after Postgres is healthy and before `api` starts; locally use `python -m alembic upgrade head` from `companion/api` with `DATABASE_URL` if needed
+
+---
+
+## Companion API — compact card (ESP)
+
+`GET /scryfall/cards/random?format=compact` returns `schema`, `id`, `layout`, `image` (`status`, `art_crop`), `panel` (name, `mana_symbols` as ordered `{…}` tokens, `cmc`, type/oracle/P/T/loyalty, sorted `color_identity`, set line, etc.). Default without `format=compact` returns full upstream `{ "card": … }`.

@@ -8,3 +8,4 @@ sqlmodel>=0.0.22
 sqlalchemy>=2.0
 psycopg2-binary>=2.9
 alembic>=1.13
+pydantic>=2.0

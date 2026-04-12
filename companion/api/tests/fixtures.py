@@ -1,0 +1,26 @@
+"""Shared Scryfall-like card dicts for tests."""
+
+SKY_RUIN_CARD = {
+    "object": "card",
+    "id": "2bdb5850-df1e-4d8a-af7a-15cab080fb8f",
+    "oracle_id": "d9b7881b-915a-42f1-bd2f-0aaa900a8981",
+    "name": "Sky Ruin Drake",
+    "layout": "normal",
+    "mana_cost": "{4}{U}",
+    "cmc": 5.0,
+    "type_line": "Creature — Drake",
+    "oracle_text": "Flying",
+    "power": "2",
+    "toughness": "5",
+    "colors": ["U"],
+    "color_identity": ["U"],
+    "keywords": ["Flying"],
+    "rarity": "common",
+    "set": "zen",
+    "set_name": "Zendikar",
+    "collector_number": "66",
+    "flavor_text": "Hold up.",
+    "image_uris": {
+        "art_crop": "https://cards.scryfall.io/art_crop/front/x.jpg",
+    },
+}

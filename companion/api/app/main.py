@@ -4,6 +4,7 @@ from app.routes import ping_bp
 from sanic_redis import SanicRedis
 from app.routes.scryfall import skryfall_bp
 from app.clients.scryfall import ScryfallClient
+from app.request import ValidatedRequest
 
 def initialize_clients(app: Sanic) -> Sanic:
     scryfall_client = ScryfallClient()
@@ -11,7 +12,7 @@ def initialize_clients(app: Sanic) -> Sanic:
     return app
 
 def create_app(config: SanicConfig = SanicConfig) -> Sanic:
-    app = Sanic("Cardviewer_API")
+    app = Sanic("Cardviewer_API", request_class=ValidatedRequest)
     
     # Update Configuration
     app.update_config(config)
