@@ -1,5 +1,7 @@
 #include <Arduino.h>
 
+#include <ctype.h>
+
 #include <ArduinoJson.h>
 
 #include <GxEPD2_BW.h>
@@ -13,6 +15,8 @@
 #include <esp_task_wdt.h>
 
 #include "HttpFetch.h"
+
+#include "ManaSprites.h"
 
 #include "secrets.h"
 
@@ -409,6 +413,492 @@ static String truncateToWidth(const String &s, int maxW) {
 
 
 
+#ifndef MAX_MANA_TOK
+
+#define MAX_MANA_TOK 24
+
+#endif
+
+
+
+static String manaInnerFromToken(const char *tok) {
+
+  if (!tok || tok[0] != '{') {
+
+    return String();
+
+  }
+
+  const char *end = strchr(tok + 1, '}');
+
+  if (!end) {
+
+    return String();
+
+  }
+
+  String s;
+
+  for (const char *p = tok + 1; p < end; ++p) {
+
+    s += *p;
+
+  }
+
+  return s;
+
+}
+
+
+
+static bool manaAllDigits(const String &s) {
+
+  if (s.length() == 0) {
+
+    return false;
+
+  }
+
+  for (unsigned i = 0; i < s.length(); i++) {
+
+    if (!isdigit((unsigned char)s[i])) {
+
+      return false;
+
+    }
+
+  }
+
+  return true;
+
+}
+
+
+
+// Generic/numeric mana first, then colored / hybrid (Scryfall order within each group).
+
+static bool manaIsGenericInner(const String &inner) {
+
+  if (inner.length() == 0 || inner.indexOf('/') >= 0) {
+
+    return false;
+
+  }
+
+  if (manaAllDigits(inner)) {
+
+    return true;
+
+  }
+
+  if (inner.length() == 1) {
+
+    char c = (char)toupper((unsigned char)inner[0]);
+
+    if (c == 'X' || c == 'Y' || c == 'Z') {
+
+      return true;
+
+    }
+
+  }
+
+  return false;
+
+}
+
+
+
+static void blitMana(const uint8_t *bmp, int x, int y) {
+
+  display.drawBitmap(x, y, bmp, MANA_BMP_W, MANA_BMP_H, GxEPD_BLACK);
+
+}
+
+
+
+static const uint8_t *manaColorSprite(char c) {
+
+  switch ((char)toupper((unsigned char)c)) {
+
+  case 'W':
+
+    return MANA_SPRITE_W;
+
+  case 'U':
+
+    return MANA_SPRITE_U;
+
+  case 'B':
+
+    return MANA_SPRITE_B;
+
+  case 'R':
+
+    return MANA_SPRITE_R;
+
+  case 'G':
+
+    return MANA_SPRITE_G;
+
+  case 'C':
+
+    return MANA_SPRITE_C;
+
+  case 'S':
+
+    return MANA_SPRITE_S;
+
+  default:
+
+    return nullptr;
+
+  }
+
+}
+
+
+
+static const uint8_t *manaGenSprite(int n) {
+
+  switch (n) {
+
+  case 0:
+
+    return MANA_SPRITE_GEN_0;
+
+  case 1:
+
+    return MANA_SPRITE_GEN_1;
+
+  case 2:
+
+    return MANA_SPRITE_GEN_2;
+
+  case 3:
+
+    return MANA_SPRITE_GEN_3;
+
+  case 4:
+
+    return MANA_SPRITE_GEN_4;
+
+  case 5:
+
+    return MANA_SPRITE_GEN_5;
+
+  case 6:
+
+    return MANA_SPRITE_GEN_6;
+
+  case 7:
+
+    return MANA_SPRITE_GEN_7;
+
+  case 8:
+
+    return MANA_SPRITE_GEN_8;
+
+  case 9:
+
+    return MANA_SPRITE_GEN_9;
+
+  case 10:
+
+    return MANA_SPRITE_GEN_10;
+
+  case 11:
+
+    return MANA_SPRITE_GEN_11;
+
+  case 12:
+
+    return MANA_SPRITE_GEN_12;
+
+  case 13:
+
+    return MANA_SPRITE_GEN_13;
+
+  case 14:
+
+    return MANA_SPRITE_GEN_14;
+
+  case 15:
+
+    return MANA_SPRITE_GEN_15;
+
+  case 16:
+
+    return MANA_SPRITE_GEN_16;
+
+  case 17:
+
+    return MANA_SPRITE_GEN_17;
+
+  case 18:
+
+    return MANA_SPRITE_GEN_18;
+
+  case 19:
+
+    return MANA_SPRITE_GEN_19;
+
+  case 20:
+
+    return MANA_SPRITE_GEN_20;
+
+  default:
+
+    return nullptr;
+
+  }
+
+}
+
+
+
+static void drawTextCenteredInPip(int cx, int cy, const String &s) {
+
+  display.setFont(nullptr);
+
+  display.setTextSize(1);
+
+  display.setTextColor(GxEPD_BLACK);
+
+  int16_t x1, y1;
+
+  uint16_t tw, th;
+
+  display.getTextBounds(s.c_str(), 0, 0, &x1, &y1, &tw, &th);
+
+  int tx = cx - (int)tw / 2 - (int)x1;
+
+  int ty = cy - (int)th / 2 - (int)y1;
+
+  display.setCursor(tx, ty);
+
+  display.print(s.c_str());
+
+}
+
+
+
+static void drawManaHybridPip(int x, int y, const String &left, const String &right) {
+
+  int cx = x + MANA_BMP_W / 2;
+
+  int cy = y + MANA_BMP_H / 2;
+
+  int r = MANA_BMP_W / 2;
+
+  display.fillCircle(cx, cy, r - 1, GxEPD_WHITE);
+
+  display.drawCircle(cx, cy, r, GxEPD_BLACK);
+
+  display.drawLine(cx, cy - r, cx, cy + r, GxEPD_BLACK);
+
+  drawTextCenteredInPip(cx - r / 2, cy, left);
+
+  drawTextCenteredInPip(cx + r / 2, cy, right);
+
+}
+
+
+
+// Returns true if a pip was drawn (known symbol).
+
+static bool drawOneManaPip(int x, int y, const String &full) {
+
+  String inner = manaInnerFromToken(full.c_str());
+
+  if (inner.length() == 0) {
+
+    return false;
+
+  }
+
+  if (inner.indexOf('/') >= 0) {
+
+    int slash = inner.indexOf('/');
+
+    String right = inner.substring(slash + 1);
+
+    if (right.indexOf('/') >= 0) {
+
+      return false;
+
+    }
+
+    String left = inner.substring(0, slash);
+
+    left.trim();
+
+    right.trim();
+
+    if (left.length() == 0 || right.length() == 0) {
+
+      return false;
+
+    }
+
+    drawManaHybridPip(x, y, left, right);
+
+    return true;
+
+  }
+
+  if (inner.length() == 1) {
+
+    char c = (char)toupper((unsigned char)inner[0]);
+
+    if (c == 'X') {
+
+      blitMana(MANA_SPRITE_GEN_X, x, y);
+
+      return true;
+
+    }
+
+    if (c == 'Y' || c == 'Z') {
+
+      return false;
+
+    }
+
+    const uint8_t *col = manaColorSprite(c);
+
+    if (col) {
+
+      blitMana(col, x, y);
+
+      return true;
+
+    }
+
+  }
+
+  if (manaAllDigits(inner)) {
+
+    int n = inner.toInt();
+
+    const uint8_t *g = manaGenSprite(n);
+
+    if (g) {
+
+      blitMana(g, x, y);
+
+      return true;
+
+    }
+
+  }
+
+  return false;
+
+}
+
+
+
+// Generics left, colored/hybrid right; unknown symbols logged and concatenated for raw fallback line.
+
+static int drawManaCostRow(int colX, int yBaseline, const String *tok, int n, int nGeneric) {
+
+  if (n <= 0) {
+
+    return yBaseline;
+
+  }
+
+  const int pipGap = 3;
+
+  const int groupGap = 4;
+
+  const int pipStep = MANA_BMP_W + pipGap;
+
+  int maxPips = (COL_TEXT_W + pipGap) / pipStep;
+
+  if (maxPips < 1) {
+
+    maxPips = 1;
+
+  }
+
+  int yTop = yBaseline - 4;
+
+  int cx = colX;
+
+  String unknownRaw;
+
+  int drawn = 0;
+
+  for (int i = 0; i < n; i++) {
+
+    if (drawn >= maxPips) {
+
+      unknownRaw += tok[i];
+
+      continue;
+
+    }
+
+    if (i == nGeneric && nGeneric > 0) {
+
+      cx += groupGap;
+
+    }
+
+    if (drawOneManaPip(cx, yTop, tok[i])) {
+
+      cx += pipStep;
+
+      drawn++;
+
+    } else {
+
+      Serial.printf("[mana] unknown symbol: %s\n", tok[i].c_str());
+
+      unknownRaw += tok[i];
+
+    }
+
+  }
+
+  int yNext = yBaseline;
+
+  if (drawn > 0) {
+
+    yNext = yBaseline + BODY_LINE_STEP + BLOCK_GAP;
+
+  }
+
+  if (unknownRaw.length() > 0) {
+
+    display.setFont(&FreeSans9pt7b);
+
+    display.setTextColor(GxEPD_BLACK);
+
+    String show = truncateToWidth(unknownRaw, COL_TEXT_W);
+
+    display.setCursor(colX, yNext);
+
+    display.print(show.c_str());
+
+    yNext += BODY_LINE_STEP + BLOCK_GAP;
+
+  }
+
+  if (drawn == 0 && unknownRaw.length() == 0) {
+
+    return yBaseline;
+
+  }
+
+  return yNext;
+
+}
+
+
+
 void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen) {
 
   gArtDecoded = false;
@@ -472,45 +962,85 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen) {
 
   String setLine = "";
 
-  if (panel["set_code"].is<const char *>()) {
+  if (panel["set_name"].is<const char *>()) {
 
-    setLine = panel["set_code"].as<const char *>();
-
-    if (panel["collector_number"].is<const char *>()) {
-
-      setLine += " #";
-
-      setLine += panel["collector_number"].as<const char *>();
-
-    }
-
-    if (panel["set_name"].is<const char *>()) {
-
-      setLine += " · ";
-
-      setLine += panel["set_name"].as<const char *>();
-
-    }
+    setLine = String(panel["set_name"].as<const char *>());
 
   }
 
+  String manaTok[MAX_MANA_TOK];
 
+  int nMana = 0;
 
-  String manaLine = "";
+  int nManaGeneric = 0;
 
-  if (panel["mana_symbols"].is<JsonArray>()) {
+  {
 
-    JsonArray syms = panel["mana_symbols"].as<JsonArray>();
+    String gen[MAX_MANA_TOK];
 
-    for (size_t i = 0; i < syms.size(); i++) {
+    String col[MAX_MANA_TOK];
 
-      JsonVariant v = syms[i];
+    int ng = 0;
 
-      if (v.is<const char *>()) {
+    int nc = 0;
 
-        manaLine += v.as<const char *>();
+    if (panel["mana_symbols"].is<JsonArray>()) {
+
+      JsonArray syms = panel["mana_symbols"].as<JsonArray>();
+
+      for (size_t i = 0; i < syms.size(); i++) {
+
+        JsonVariant v = syms[i];
+
+        if (!v.is<const char *>()) {
+
+          continue;
+
+        }
+
+        String t = String(v.as<const char *>());
+
+        String inner = manaInnerFromToken(t.c_str());
+
+        if (inner.length() == 0) {
+
+          continue;
+
+        }
+
+        if (manaIsGenericInner(inner)) {
+
+          if (ng < MAX_MANA_TOK) {
+
+            gen[ng++] = t;
+
+          }
+
+        } else {
+
+          if (nc < MAX_MANA_TOK) {
+
+            col[nc++] = t;
+
+          }
+
+        }
 
       }
+
+    }
+
+    for (int i = 0; i < ng; i++) {
+
+      manaTok[nMana++] = gen[i];
+
+    }
+
+    nManaGeneric = nMana;
+
+    for (int i = 0; i < nc; i++) {
+
+      manaTok[nMana++] = col[i];
 
     }
 
@@ -560,15 +1090,9 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen) {
 
     display.setFont(&FreeSans9pt7b);
 
-    if (manaLine.length() > 0) {
+    if (nMana > 0) {
 
-      String ml = truncateToWidth(manaLine, COL_TEXT_W);
-
-      display.setCursor(COL_X, y);
-
-      display.print(ml.c_str());
-
-      y += BODY_LINE_STEP + BLOCK_GAP;
+      y = drawManaCostRow(COL_X, y, manaTok, nMana, nManaGeneric);
 
     }
 

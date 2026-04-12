@@ -10,6 +10,7 @@ COPY config.py .
 COPY alembic.ini .
 COPY alembic/ ./alembic/
 COPY app/ ./app/
+COPY scripts/ ./scripts/
 
 ENV PYTHONPATH=/app
 

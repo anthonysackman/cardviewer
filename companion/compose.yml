@@ -2,7 +2,11 @@ services:
   migrate:
     image: ghcr.io/anthonysackman/cardviewer-api:latest
     build: ./api
-    command: python -m alembic upgrade head
+    # Same bind-mount as `api`: after `git pull` on the server, migrations use current alembic/ from disk.
+    # Without this, migrate only ran whatever was baked into the pulled image (stale vs repo).
+    volumes:
+      - ./api:/app
+    command: python scripts/run_migrate.py
     working_dir: /app
     environment:
       - PYTHONPATH=/app

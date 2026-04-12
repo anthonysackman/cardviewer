@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""Generate include/ManaSprites.h: 16x16 1-bit bitmaps for Adafruit drawBitmap."""
+
+from __future__ import annotations
+
+import math
+from pathlib import Path
+
+W = H = 16
+CX, CY = 7.5, 7.5
+
+
+def ring(pix: list[list[int]], cx: float, cy: float, r0: float, r1: float) -> None:
+    for y in range(H):
+        for x in range(W):
+            d = math.hypot(x - cx, y - cy)
+            if r0 <= d <= r1:
+                pix[y][x] = 1
+
+
+def merge_glyph(pix: list[list[int]], ox: int, oy: int, g: list[list[int]]) -> None:
+    for r in range(len(g)):
+        for c in range(len(g[r])):
+            if g[r][c]:
+                x, y = ox + c, oy + r
+                if 0 <= x < W and 0 <= y < H:
+                    pix[y][x] = 1
+
+
+def pix_to_rows(pix: list[list[int]]) -> list[tuple[int, int]]:
+    rows: list[tuple[int, int]] = []
+    for y in range(H):
+        b0 = b1 = 0
+        for x in range(8):
+            if pix[y][x]:
+                b0 |= 128 >> x
+        for x in range(8, 16):
+            if pix[y][x]:
+                b1 |= 128 >> (x - 8)
+        rows.append((b0, b1))
+    return rows
+
+
+# 5x7 patterns
+GLYPH_W = [
+    [1, 0, 1, 0, 1],
+    [1, 0, 1, 0, 1],
+    [1, 0, 1, 0, 1],
+    [1, 0, 1, 0, 1],
+    [1, 0, 1, 0, 1],
+    [1, 1, 0, 1, 1],
+    [1, 0, 1, 0, 1],
+]
+
+PATTERNS: dict[str, list[str]] = {
+    "U": [
+        "10101",
+        "10101",
+        "10101",
+        "10101",
+        "10101",
+        "10101",
+        "01110",
+    ],
+    "B": [
+        "11110",
+        "10101",
+        "10101",
+        "11110",
+        "10101",
+        "10101",
+        "11110",
+    ],
+    "R": [
+        "11110",
+        "10101",
+        "10101",
+        "11110",
+        "10100",
+        "10100",
+        "10100",
+    ],
+    "G": [
+        "01110",
+        "10100",
+        "10100",
+        "11110",
+        "10101",
+        "10101",
+        "01110",
+    ],
+    "C": [
+        "01110",
+        "10101",
+        "10100",
+        "10100",
+        "10100",
+        "10101",
+        "01110",
+    ],
+    "S": [
+        "01110",
+        "10101",
+        "10100",
+        "01110",
+        "00101",
+        "10101",
+        "01110",
+    ],
+}
+
+GLYPH_X = [
+    [1, 0, 1, 0, 1],
+    [1, 0, 1, 0, 1],
+    [0, 1, 0, 1, 0],
+    [0, 1, 0, 1, 0],
+    [1, 0, 1, 0, 1],
+    [1, 0, 1, 0, 1],
+    [1, 0, 1, 0, 1],
+]
+
+
+def str_to_glyph(rows: list[str]) -> list[list[int]]:
+    g: list[list[int]] = []
+    for row in rows:
+        g.append([int(ch) for ch in row])
+    return g
+
+
+DIGITS: dict[str, list[str]] = {
+    "0": ["011", "101", "101", "101", "101", "101", "011"],
+    "1": ["010", "110", "010", "010", "010", "010", "010"],
+    "2": ["011", "101", "001", "010", "100", "100", "111"],
+    "3": ["111", "001", "010", "001", "001", "101", "110"],
+    "4": ["101", "101", "101", "111", "001", "001", "001"],
+    "5": ["111", "100", "100", "110", "001", "001", "110"],
+    "6": ["011", "100", "100", "111", "101", "101", "011"],
+    "7": ["111", "001", "010", "010", "010", "010", "010"],
+    "8": ["011", "101", "101", "011", "101", "101", "011"],
+    "9": ["011", "101", "101", "011", "001", "001", "110"],
+}
+
+
+def digit_glyph(ch: str) -> list[list[int]]:
+    return str_to_glyph(DIGITS[ch])
+
+
+def make_color_letter(letter: str) -> list[tuple[int, int]]:
+    pix = [[0] * W for _ in range(H)]
+    ring(pix, CX, CY, 6.3, 7.2)
+    if letter == "W":
+        merge_glyph(pix, 6, 4, GLYPH_W)
+    else:
+        merge_glyph(pix, 6, 4, str_to_glyph(PATTERNS[letter]))
+    return pix_to_rows(pix)
+
+
+def merge_digit(pix: list[list[int]], ox: int, oy: int, g: list[list[int]]) -> None:
+    for r in range(len(g)):
+        for c in range(len(g[r])):
+            if g[r][c]:
+                x, y = ox + c, oy + r
+                if 0 <= x < W and 0 <= y < H:
+                    pix[y][x] = 1
+
+
+def make_generic_numeric(num_str: str) -> list[tuple[int, int]]:
+    pix = [[0] * W for _ in range(H)]
+    ring(pix, CX, CY, 6.3, 7.2)
+    if len(num_str) == 1 and num_str in DIGITS:
+        merge_digit(pix, 6, 5, digit_glyph(num_str))
+    elif len(num_str) == 2 and all(c in DIGITS for c in num_str):
+        merge_digit(pix, 3, 5, digit_glyph(num_str[0]))
+        merge_digit(pix, 8, 5, digit_glyph(num_str[1]))
+    return pix_to_rows(pix)
+
+
+def c_array(name: str, rows: list[tuple[int, int]]) -> str:
+    flat: list[str] = []
+    for b0, b1 in rows:
+        flat.append(f"0x{b0:02x}")
+        flat.append(f"0x{b1:02x}")
+    lines = [f"static const uint8_t {name}[{len(flat)}] PROGMEM = {{"]
+    for i in range(0, len(flat), 8):
+        chunk = flat[i : i + 8]
+        lines.append("  " + ", ".join(chunk) + ",")
+    lines.append("};")
+    return "\n".join(lines)
+
+
+def main() -> None:
+    root = Path(__file__).resolve().parent.parent
+    out_path = root / "include" / "ManaSprites.h"
+    out: list[str] = [
+        "#pragma once",
+        "// AUTO-GENERATED by scripts/gen_mana_sprites.py",
+        "#include <Arduino.h>",
+        "",
+        "static constexpr int MANA_BMP_W = 16;",
+        "static constexpr int MANA_BMP_H = 16;",
+        "",
+    ]
+    for L in ("W", "U", "B", "R", "G", "C", "S"):
+        out.append(c_array(f"MANA_SPRITE_{L}", make_color_letter(L)))
+        out.append("")
+    for n in range(0, 21):
+        out.append(c_array(f"MANA_SPRITE_GEN_{n}", make_generic_numeric(str(n))))
+        out.append("")
+    pix_x = [[0] * W for _ in range(H)]
+    ring(pix_x, CX, CY, 6.3, 7.2)
+    merge_glyph(pix_x, 6, 4, GLYPH_X)
+    out.append(c_array("MANA_SPRITE_GEN_X", pix_to_rows(pix_x)))
+    out.append("")
+    out_path.write_text("\n".join(out), encoding="utf-8")
+    print("Wrote", out_path)
+
+
+if __name__ == "__main__":
+    main()
