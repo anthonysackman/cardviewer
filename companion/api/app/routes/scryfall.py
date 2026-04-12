@@ -5,7 +5,7 @@ from sanic import Blueprint
 from sanic.response import HTTPResponse, json, raw
 
 from app.constants import ResponseFormat
-from app.images import to_display_bw_jpeg, to_display_jpeg
+from app.images import to_display_bw_jpeg, to_display_bw_packed, to_display_jpeg
 from app.request import ValidatedRequest
 from app.schemas.queries import RandomCardQuery
 from app.serializers.compact_card import scryfall_card_to_compact
@@ -37,6 +37,12 @@ def _build_display_bw_proxy_url(request: ValidatedRequest, source_url: str) -> s
     return f"{base}/api/scryfall/images/display_bw?src={encoded}&profile=auto"
 
 
+def _build_display_bw_raw_proxy_url(request: ValidatedRequest, source_url: str) -> str:
+    base = f"{request.scheme}://{request.host}"
+    encoded = quote(source_url, safe="")
+    return f"{base}/api/scryfall/images/display_bw_raw?src={encoded}&profile=auto"
+
+
 def _is_allowed_source_url(source_url: str) -> bool:
     try:
         parsed = urlparse(source_url)
@@ -62,6 +68,7 @@ async def get_random_card(request: ValidatedRequest) -> HTTPResponse:
             if src:
                 image_obj["display"] = _build_display_proxy_url(request, src)
                 image_obj["display_bw"] = _build_display_bw_proxy_url(request, src)
+                image_obj["display_bw_raw"] = _build_display_bw_raw_proxy_url(request, src)
         return json(compact)
     return json({"card": card})
 
@@ -105,3 +112,30 @@ async def get_display_bw_image(request: ValidatedRequest) -> HTTPResponse:
 
     headers = {"Cache-Control": "public, max-age=86400"}
     return raw(display_bytes, content_type="image/jpeg", headers=headers)
+
+
+@skryfall_bp.get("/images/display_bw_raw")
+async def get_display_bw_raw_image(request: ValidatedRequest) -> HTTPResponse:
+    src = request.args.get("src")
+    profile = request.args.get("profile", default="auto")
+    if profile not in {"auto", "photo", "text"}:
+        return json({"error": "validation_error", "detail": "profile must be auto|photo|text"}, status=400)
+    if not src:
+        return json({"error": "validation_error", "detail": "missing src query parameter"}, status=400)
+    if not _is_allowed_source_url(src):
+        return json({"error": "validation_error", "detail": "src must be an https://*.scryfall.io URL"}, status=400)
+
+    scryfall_client = request.app.ctx.scryfall_client
+    try:
+        source = await scryfall_client.get_binary(src)
+        packed = to_display_bw_packed(source, profile=profile)
+    except Exception:
+        return json({"error": "upstream_error", "detail": "unable to fetch or transform image"}, status=502)
+
+    headers = {
+        "Cache-Control": "public, max-age=86400",
+        "X-Cardviewer-Width": "232",
+        "X-Cardviewer-Height": "300",
+        "X-Cardviewer-Row-Bytes": "29",
+    }
+    return raw(packed, content_type="application/octet-stream", headers=headers)

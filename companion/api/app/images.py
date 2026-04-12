@@ -109,26 +109,7 @@ def to_display_bw_jpeg(
     profile: str = "auto",
 ) -> bytes:
     """Pre-binarize image server-side for more consistent e-ink rendering."""
-    base = _fit_full_card_gray(source_bytes, width, height)
-    tuned = ImageEnhance.Contrast(base).enhance(1.18)
-    tuned = tuned.filter(ImageFilter.UnsharpMask(radius=1.1, percent=155, threshold=2))
-
-    if profile == "auto":
-        # Text-heavy / high-edge cards tend to become snowy with diffusion dithering.
-        profile = "text" if _edge_density(tuned) > 0.16 else "photo"
-
-    if profile == "photo":
-        # Error diffusion preserves tones for painterly/low-contrast artwork.
-        dither_enum = getattr(Image, "Dither", None)
-        dither_mode = dither_enum.FLOYDSTEINBERG if dither_enum else Image.FLOYDSTEINBERG
-        bw = tuned.convert("1", dither=dither_mode)
-    else:
-        # Text profile: stable threshold with tiny denoise first to reduce peppering.
-        denoised = tuned.filter(ImageFilter.MedianFilter(size=3))
-        t = _otsu_threshold(denoised)
-        # Slightly bias toward white to avoid blown-out pepper on e-ink.
-        t = int(fmean((t, 132)))
-        bw = denoised.point(lambda p: 255 if p >= t else 0, mode="1")
+    bw = to_display_bw_image(source_bytes, width=width, height=height, profile=profile)
 
     out = BytesIO()
     # Save as JPEG (for current ESP JPEG decoder pipeline), but force 4:4:4 subsampling.
@@ -141,3 +122,55 @@ def to_display_bw_jpeg(
         progressive=False,
     )
     return out.getvalue()
+
+
+def to_display_bw_image(
+    source_bytes: bytes,
+    *,
+    width: int = DISPLAY_ART_WIDTH,
+    height: int = DISPLAY_ART_HEIGHT,
+    profile: str = "auto",
+) -> Image.Image:
+    """Convert source image to full-card 1-bit PIL image."""
+    base = _fit_full_card_gray(source_bytes, width, height)
+    tuned = ImageEnhance.Contrast(base).enhance(1.18)
+    tuned = tuned.filter(ImageFilter.UnsharpMask(radius=1.1, percent=155, threshold=2))
+
+    if profile == "auto":
+        # Text-heavy / high-edge cards tend to become snowy with diffusion dithering.
+        profile = "text" if _edge_density(tuned) > 0.16 else "photo"
+
+    if profile == "photo":
+        # Error diffusion preserves tones for painterly/low-contrast artwork.
+        dither_enum = getattr(Image, "Dither", None)
+        dither_mode = dither_enum.FLOYDSTEINBERG if dither_enum else Image.FLOYDSTEINBERG
+        return tuned.convert("1", dither=dither_mode)
+
+    # Text profile: stable threshold with tiny denoise first to reduce peppering.
+    denoised = tuned.filter(ImageFilter.MedianFilter(size=3))
+    t = _otsu_threshold(denoised)
+    # Slightly bias toward white to avoid blown-out pepper on e-ink.
+    t = int(fmean((t, 132)))
+    return denoised.point(lambda p: 255 if p >= t else 0, mode="1")
+
+
+def to_display_bw_packed(
+    source_bytes: bytes,
+    *,
+    width: int = DISPLAY_ART_WIDTH,
+    height: int = DISPLAY_ART_HEIGHT,
+    profile: str = "auto",
+) -> bytes:
+    """Pack 1-bit image to row-major bytes (MSB first), black=1."""
+    bw = to_display_bw_image(source_bytes, width=width, height=height, profile=profile).convert("1")
+    pixels = bw.load()
+    row_bytes = (width + 7) // 8
+    out = bytearray(row_bytes * height)
+    for y in range(height):
+        row_offset = y * row_bytes
+        for x in range(width):
+            # PIL mode "1": 0 is black, 255 is white.
+            if pixels[x, y] == 0:
+                idx = row_offset + (x >> 3)
+                out[idx] |= 1 << (7 - (x & 7))
+    return bytes(out)

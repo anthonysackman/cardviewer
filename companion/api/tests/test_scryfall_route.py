@@ -20,6 +20,7 @@ def test_random_compact_format():
     assert j["image"]["status"] == "ok"
     assert "/api/scryfall/images/display?src=" in j["image"]["display"]
     assert "/api/scryfall/images/display_bw?src=" in j["image"]["display_bw"]
+    assert "/api/scryfall/images/display_bw_raw?src=" in j["image"]["display_bw_raw"]
 
 
 def test_random_default_wraps_card():
@@ -102,3 +103,20 @@ def test_display_bw_image_rejects_bad_profile():
     _, response = app.test_client.get(f"/scryfall/images/display_bw?src={src}&profile=bad")
     assert response.status == 400
     assert response.json["error"] == "validation_error"
+
+
+def test_display_bw_raw_image_returns_expected_payload_size():
+    app = create_app()
+    src_buf = BytesIO()
+    Image.new("RGB", (600, 400), color=(220, 40, 90)).save(src_buf, format="PNG")
+    app.ctx.scryfall_client.get_binary = AsyncMock(return_value=src_buf.getvalue())
+
+    src = quote("https://cards.scryfall.io/normal/front/x.jpg", safe="")
+    _, response = app.test_client.get(f"/scryfall/images/display_bw_raw?src={src}&profile=auto")
+
+    assert response.status == 200
+    assert response.headers.get("content-type", "").startswith("application/octet-stream")
+    assert response.headers.get("x-cardviewer-width") == "232"
+    assert response.headers.get("x-cardviewer-height") == "300"
+    assert response.headers.get("x-cardviewer-row-bytes") == "29"
+    assert len(response.body) == 29 * 300

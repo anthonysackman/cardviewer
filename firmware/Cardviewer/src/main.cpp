@@ -570,6 +570,17 @@ static bool decodeJpegToArtPlane(uint8_t *data, size_t len) {
 
 
 // Blit static gArtBits — many drawPixel calls; must feed task WDT (yield() alone is not enough on ESP32 Arduino).
+static bool loadRawArtPlane(const uint8_t *data, size_t len) {
+  size_t need = sizeof(gArtBits);
+  if (!data || len != need) {
+    CV_LOG("[art] raw plane size mismatch got=%u need=%u\n", (unsigned)len, (unsigned)need);
+    return false;
+  }
+  memcpy(gArtBits, data, need);
+  CV_LOG("[art] raw plane load ok bytes=%u\n", (unsigned)len);
+  return true;
+}
+
 static void drawArtPlaneToDisplay() {
   for (int y = 0; y < ART_H; y++) {
     for (int x = 0; x < ART_W; x++) {
@@ -1271,7 +1282,7 @@ static int drawManaCostRow(int colX, int yBaseline, const String *tok, int n, in
 
 
 
-void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen) {
+void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen, const String &imgKey) {
 
   CV_LOG("[card] enter img=%p len=%u json_len=%u heap=%u\n", imgData, (unsigned)imgLen, (unsigned)json.length(),
 
@@ -1280,7 +1291,15 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen) {
   gArtDecoded = false;
 
   if (imgData && imgLen > 0) {
-    gArtDecoded = decodeJpegToArtPlane(imgData, imgLen);
+    if (imgKey == "display_bw_raw") {
+      gArtDecoded = loadRawArtPlane(imgData, imgLen);
+      if (!gArtDecoded) {
+        CV_LOG("[art] raw load failed, trying jpeg decode fallback\n");
+        gArtDecoded = decodeJpegToArtPlane(imgData, imgLen);
+      }
+    } else {
+      gArtDecoded = decodeJpegToArtPlane(imgData, imgLen);
+    }
     free(imgData);
   } else {
 
@@ -1537,8 +1556,8 @@ static const char *pickCardImageUrl(JsonVariant imgNode, const char **outKey) {
     return nullptr;
   }
   JsonObject img = imgNode.as<JsonObject>();
-  static const char *const keys[] = {"display_bw", "display", "normal", "large", "png", "small", "art_crop",
-                                     "border_crop"};
+  static const char *const keys[] = {"display_bw_raw", "display_bw", "display", "normal", "large", "png", "small",
+                                     "art_crop", "border_crop"};
   for (const char *k : keys) {
     const char *u = img[k].as<const char *>();
     if (u && u[0]) {
@@ -1605,6 +1624,7 @@ static void fetchAndDrawCard() {
   uint8_t *imgBuf = nullptr;
 
   size_t imgLen = 0;
+  String pickedImageKey = "";
 
 
 
@@ -1625,6 +1645,7 @@ static void fetchAndDrawCard() {
         if (pickedKey) {
 
           CV_LOG("[fetch] image key=%s\n", pickedKey);
+          pickedImageKey = String(pickedKey);
 
         }
 
@@ -1694,7 +1715,7 @@ static void fetchAndDrawCard() {
 
     cv_trace("fetch ok, drawCardScreen");
 
-    drawCardScreen(json, imgBuf, imgLen);
+    drawCardScreen(json, imgBuf, imgLen, pickedImageKey);
   }
 }
 
