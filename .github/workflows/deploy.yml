@@ -73,6 +73,7 @@ jobs:
           host: ${{ secrets.DROPLET_IP }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 10m
           script: |
             if [ ! -d ~/cardviewer ]; then
               git clone https://github.com/anthonysackman/cardviewer.git ~/cardviewer
