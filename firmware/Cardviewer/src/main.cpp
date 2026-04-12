@@ -176,6 +176,8 @@ static int gCbMaxX = 0;
 
 static int gCbMaxY = 0;
 
+static const int ART_LUMA_THRESHOLD = 118;
+
 
 
 static void setArtPixelInPlane(int lx, int ly, bool black) {
@@ -259,7 +261,7 @@ static int jpegDrawCallback(JPEGDRAW *pDraw) {
 
       int ly = dy - ART_Y;
 
-      setArtPixelInPlane(lx, ly, ylum < 140);
+      setArtPixelInPlane(lx, ly, ylum < ART_LUMA_THRESHOLD);
 
     }
 
@@ -1535,7 +1537,8 @@ static const char *pickCardImageUrl(JsonVariant imgNode, const char **outKey) {
     return nullptr;
   }
   JsonObject img = imgNode.as<JsonObject>();
-  static const char *const keys[] = {"display", "normal", "large", "png", "small", "art_crop", "border_crop"};
+  static const char *const keys[] = {"display_bw", "display", "normal", "large", "png", "small", "art_crop",
+                                     "border_crop"};
   for (const char *k : keys) {
     const char *u = img[k].as<const char *>();
     if (u && u[0]) {
