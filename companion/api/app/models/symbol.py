@@ -1,4 +1,4 @@
-"""Mana symbology — seeded from Scryfall /symbology."""
+"""Mana symbology — seeded from `/symbology`."""
 
 from typing import Optional
 

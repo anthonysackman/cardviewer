@@ -1,4 +1,4 @@
-"""Set lookup — seeded from Scryfall /sets."""
+"""Set lookup — seeded from `/sets`."""
 
 from datetime import date
 from typing import Optional

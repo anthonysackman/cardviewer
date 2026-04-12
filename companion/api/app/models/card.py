@@ -1,11 +1,13 @@
-"""Scryfall printing row — one row per card face printing."""
+"""Skryfall printing row — one row per API printing (not per oracle card)."""
+
+from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import Column, Numeric, String
+from sqlalchemy import Column, Index, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlmodel import Field, SQLModel
 
@@ -14,6 +16,15 @@ from app.models.common import utc_now
 
 class Card(SQLModel, table=True):
     __tablename__ = "cards"
+    __table_args__ = (
+        UniqueConstraint(
+            "set_code",
+            "collector_number",
+            name="uq_cards_set_collector",
+        ),
+        Index("ix_cards_oracle_id", "oracle_id"),
+        Index("ix_cards_cached_at", "cached_at"),
+    )
 
     id: UUID = Field(primary_key=True)
     oracle_id: UUID
@@ -27,7 +38,7 @@ class Card(SQLModel, table=True):
     toughness: Optional[str] = None
     loyalty: Optional[str] = None
     rarity: str
-    set_code: str
+    set_code: str = Field(foreign_key="sets.code")
     set_name: str
     collector_number: str
     artist: str

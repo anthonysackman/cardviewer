@@ -7,6 +7,8 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY config.py .
+COPY alembic.ini .
+COPY alembic/ ./alembic/
 COPY app/ ./app/
 
 ENV PYTHONPATH=/app

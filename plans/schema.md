@@ -3,7 +3,7 @@
 ## PostgreSQL Tables
 
 ### `cards`
-Stores one row per Scryfall printing (not per oracle card).
+Stores one row per API printing (not per oracle card).
 
 | Column | Type | Nullable | Source |
 |---|---|---|---|
@@ -19,8 +19,8 @@ Stores one row per Scryfall printing (not per oracle card).
 | `toughness` | TEXT | YES | `toughness` (creatures only) |
 | `loyalty` | TEXT | YES | `loyalty` (planeswalkers only) |
 | `rarity` | TEXT | NO | `rarity` |
-| `set_code` | TEXT | NO | `set` |
-| `set_name` | TEXT | NO | `set_name` |
+| `set_code` | TEXT FK | NO | `set` → `sets.code` |
+| `set_name` | TEXT | NO | `set_name` (denormalized snapshot at ingest) |
 | `collector_number` | TEXT | NO | `collector_number` |
 | `artist` | TEXT | NO | `artist` |
 | `color_identity` | TEXT[] | NO | `color_identity` |
@@ -40,7 +40,7 @@ Stores dithered 1-bit bitmaps for the ESP32.
 | Column | Type | Nullable | Source |
 |---|---|---|---|
 | `id` | UUID PK | NO | generated |
-| `card_id` | UUID FK | NO | → `cards.id` |
+| `card_id` | UUID FK | NO | → `cards.id` (ON DELETE CASCADE) |
 | `local_path` | TEXT | NO | path to file on disk/volume |
 | `cached_at` | TIMESTAMP | NO | server time on insert |
 
@@ -79,8 +79,28 @@ Single-row app config table.
 |---|---|---|---|
 | `id` | INT PK | NO | always 1 |
 | `mode` | TEXT | NO | `random`, `daily`, `pushed`, `cycle` |
-| `current_card_id` | UUID FK | YES | → `cards.id` |
+| `current_card_id` | UUID FK | YES | → `cards.id` (ON DELETE SET NULL) |
 | `updated_at` | TIMESTAMP | NO | |
+
+---
+
+## Foreign keys
+
+| Child table | Column(s) | Parent | ON DELETE |
+|---|---|---|---|
+| `cards` | `set_code` | `sets.code` | RESTRICT (default) |
+| `card_images` | `card_id` | `cards.id` | CASCADE |
+| `settings` | `current_card_id` | `cards.id` | SET NULL |
+
+---
+
+## Constraints and indexes
+
+| Name | Definition |
+|---|---|
+| `uq_cards_set_collector` | UNIQUE (`set_code`, `collector_number`) |
+| `ix_cards_oracle_id` | INDEX on `oracle_id` |
+| `ix_cards_cached_at` | INDEX on `cached_at` (staleness / eviction) |
 
 ---
 
@@ -97,6 +117,8 @@ Single-row app config table.
 ## Notes
 - `mana_cost` stored raw (`{2}{W}{U}`), resolved to display via `symbols` table
 - Prices stored per printing — use `prints_search_uri` to find cheapest reprint at fetch time
-- Card cache expires 24hr per Scryfall ToS — use `cached_at` to check staleness
+- Card cache expires 24hr per upstream API ToS — use `cached_at` to check staleness
 - Images stored on disk volume, path stored in `card_images` table
 - `settings` is always a single row (id=1), use upsert
+- `set_name` on `cards` is denormalized; authoritative set metadata lives in `sets`
+- Migrations: Docker Compose runs the `migrate` service (`alembic upgrade head`) after Postgres is healthy and before `api` starts; locally use `python -m alembic upgrade head` from `companion/api` with `DATABASE_URL` if needed
