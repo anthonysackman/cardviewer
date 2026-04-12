@@ -1,19 +1,19 @@
-"""PostgreSQL engine and session factory."""
+"""PostgreSQL async engine and session factory."""
 
-from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
-from sqlmodel import Session
 
 from config import SanicConfig
 
-engine = create_engine(
-    SanicConfig.DATABASE_URL,
+engine = create_async_engine(
+    SanicConfig.ASYNC_DATABASE_URL,
     pool_pre_ping=True,
 )
 
 SessionLocal = sessionmaker(
-    class_=Session,
+    class_=AsyncSession,
     autocommit=False,
     autoflush=False,
     bind=engine,
+    expire_on_commit=False,
 )

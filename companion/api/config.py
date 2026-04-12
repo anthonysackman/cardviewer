@@ -3,13 +3,20 @@
 import os
 
 
-def _default_database_url() -> str:
-    return os.environ.get(
+class SanicConfig:
+    # Sync URL — used by Alembic migrations only
+    DATABASE_URL: str = os.environ.get(
         "DATABASE_URL",
-        "postgresql+psycopg2://postgres:postgres@localhost:5432/postgres",
+        "postgresql+psycopg2://postgres:postgres@postgres:5432/postgres",
     )
 
+    # Async URL — used by the API at runtime
+    ASYNC_DATABASE_URL: str = os.environ.get(
+        "ASYNC_DATABASE_URL",
+        "postgresql+asyncpg://postgres:postgres@postgres:5432/postgres",
+    )
 
-class SanicConfig:
-    REDIS_MAIN_URL = "redis://localhost:6379/0"
-    DATABASE_URL = _default_database_url()
+    REDIS_MAIN_URL: str = os.environ.get(
+        "REDIS_URL",
+        "redis://redis:6379/0",
+    )
