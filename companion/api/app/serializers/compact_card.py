@@ -73,6 +73,12 @@ def scryfall_card_to_compact(raw: dict) -> dict[str, Any]:
     _panel_field(panel, "set_name", raw.get("set_name"))
     _panel_field(panel, "collector_number", raw.get("collector_number"))
     _panel_field(panel, "rarity", raw.get("rarity"))
+    _panel_field(panel, "released_at", raw.get("released_at"))
+
+    prices = raw.get("prices")
+    if isinstance(prices, dict):
+        _panel_field(panel, "price_usd", prices.get("usd"))
+        _panel_field(panel, "price_usd_foil", prices.get("usd_foil"))
 
     return {
         "schema": COMPACT_SCHEMA,

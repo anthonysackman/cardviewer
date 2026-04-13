@@ -9,6 +9,7 @@
 
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
+#include <Fonts/FreeSerifBold12pt7b.h>
 
 #include <JPEGDEC.h>
 
@@ -34,7 +35,7 @@
 
 #ifndef CARDVIEWER_FETCH_INTERVAL_MS
 
-#define CARDVIEWER_FETCH_INTERVAL_MS 5000
+#define CARDVIEWER_FETCH_INTERVAL_MS 60000
 
 #endif
 
@@ -132,23 +133,25 @@ static const int TITLE_LINE_STEP = 20;
 static const int TITLE_MAX_LINES = 3;
 
 static const int BODY_LINE_STEP = 14;
+static const int ORACLE_LINE_STEP = 10;
 
 static const int BLOCK_GAP = 6;
 
 // Tighter gap title -> mana row; extra gap after mana before type line (set in drawManaCostRow).
 static const int TITLE_TO_MANA_GAP = 2;
 
-// Footer block for set/collector (two lines, higher on panel than single-line-at-bottom)
-static const int FOOTER_BASELINE_0 = EPD_H - 46;
+// Footer block pinned to panel bottom.
+static const int FOOTER_SET_BASELINE = EPD_H - 6;
+static const int FOOTER_META_BASELINE = FOOTER_SET_BASELINE - 12;
 
 static const int FOOTER_LINE_STEP = 12;
 
-static const int FOOTER_MAX_LINES = 2;
+static const int FOOTER_MAX_LINES = 1;
 
 static const int FOOTER_Y_MAX = EPD_H - 2;
 
 // Oracle/body text must finish above footer
-static const int BODY_BASELINE_MAX = FOOTER_BASELINE_0 - BLOCK_GAP - 4;
+static const int BODY_BASELINE_MAX = FOOTER_META_BASELINE - BLOCK_GAP - 2;
 
 static const int ART_ROW_BYTES = (ART_W + 7) / 8;
 
@@ -603,6 +606,7 @@ static void drawArtPlaneToDisplay() {
 static int printWrappedColumn(int x, int y, const String &text, int maxW, int lineH, int maxLines, int yMax,
                               const GFXfont *font) {
 
+  display.setTextSize(1);
   display.setFont(font);
 
   display.setTextColor(GxEPD_BLACK);
@@ -979,6 +983,7 @@ static void drawTextCenteredInPip(int cx, int cy, const String &s, uint8_t textS
   display.setCursor(tx, ty);
 
   display.print(s.c_str());
+  display.setTextSize(1);
 
 }
 
@@ -1369,6 +1374,31 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen, const S
 
   }
 
+  String releaseYear = "";
+  if (panel["released_at"].is<const char *>()) {
+    String released = String(panel["released_at"].as<const char *>());
+    if (released.length() >= 4) {
+      releaseYear = released.substring(0, 4);
+    }
+  }
+
+  String priceUsd = "";
+  if (panel["price_usd"].is<const char *>()) {
+    priceUsd = String(panel["price_usd"].as<const char *>());
+  }
+
+  String footerMeta = "";
+  if (priceUsd.length() > 0) {
+    footerMeta = "$";
+    footerMeta += priceUsd;
+  }
+  if (releaseYear.length() > 0) {
+    if (footerMeta.length() > 0) {
+      footerMeta += " • ";
+    }
+    footerMeta += releaseYear;
+  }
+
   int nMana = 0;
 
   int nManaGeneric = 0;
@@ -1447,6 +1477,7 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen, const S
 
   drawPagedFull([&] {
 
+    display.setTextSize(1);
     display.fillScreen(GxEPD_WHITE);
 
     display.drawRect(ART_X, ART_Y, ART_W, ART_H, GxEPD_BLACK);
@@ -1479,7 +1510,7 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen, const S
 
     y = printWrappedColumn(COL_X, y, name.length() ? name : String("?"), COL_TEXT_W, TITLE_LINE_STEP,
 
-                           TITLE_MAX_LINES, BODY_BASELINE_MAX, &FreeSansBold12pt7b);
+                           TITLE_MAX_LINES, BODY_BASELINE_MAX, &FreeSerifBold12pt7b);
 
     y += TITLE_TO_MANA_GAP;
 
@@ -1515,9 +1546,9 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen, const S
 
 
 
-    if (oracle.length() > 0 && y < BODY_BASELINE_MAX - BODY_LINE_STEP) {
+    if (oracle.length() > 0 && y < BODY_BASELINE_MAX - ORACLE_LINE_STEP) {
 
-      int oracleMaxLines = (BODY_BASELINE_MAX - y) / BODY_LINE_STEP;
+      int oracleMaxLines = (BODY_BASELINE_MAX - y) / ORACLE_LINE_STEP;
 
       if (oracleMaxLines > 10) {
 
@@ -1525,17 +1556,22 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen, const S
 
       }
 
-      printWrappedColumn(COL_X, y, oracle, COL_TEXT_W, BODY_LINE_STEP, oracleMaxLines, BODY_BASELINE_MAX,
+      printWrappedColumn(COL_X, y, oracle, COL_TEXT_W, ORACLE_LINE_STEP, oracleMaxLines, BODY_BASELINE_MAX,
 
-                         &FreeSans9pt7b);
+                         nullptr);
 
     }
 
 
 
+    if (footerMeta.length() > 0) {
+      printWrappedColumn(COL_X, FOOTER_META_BASELINE, footerMeta, COL_TEXT_W, FOOTER_LINE_STEP, 1,
+                         FOOTER_Y_MAX, &FreeSans9pt7b);
+    }
+
     if (setLine.length() > 0) {
 
-      printWrappedColumn(COL_X, FOOTER_BASELINE_0, setLine, COL_TEXT_W, FOOTER_LINE_STEP, FOOTER_MAX_LINES,
+      printWrappedColumn(COL_X, FOOTER_SET_BASELINE, setLine, COL_TEXT_W, FOOTER_LINE_STEP, FOOTER_MAX_LINES,
 
                          FOOTER_Y_MAX, &FreeSans9pt7b);
 
