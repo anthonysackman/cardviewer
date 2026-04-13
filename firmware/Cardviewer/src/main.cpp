@@ -133,7 +133,7 @@ static const int TITLE_LINE_STEP = 20;
 static const int TITLE_MAX_LINES = 3;
 
 static const int BODY_LINE_STEP = 14;
-static const int ORACLE_LINE_STEP = 10;
+static const int ORACLE_LINE_STEP = 12;
 
 static const int BLOCK_GAP = 6;
 
@@ -141,7 +141,7 @@ static const int BLOCK_GAP = 6;
 static const int TITLE_TO_MANA_GAP = 2;
 
 // Footer block pinned to panel bottom.
-static const int FOOTER_SET_BASELINE = EPD_H - 6;
+static const int FOOTER_SET_BASELINE = EPD_H - 14;
 static const int FOOTER_META_BASELINE = FOOTER_SET_BASELINE - 12;
 
 static const int FOOTER_LINE_STEP = 12;
@@ -1558,7 +1558,7 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen, const S
 
       printWrappedColumn(COL_X, y, oracle, COL_TEXT_W, ORACLE_LINE_STEP, oracleMaxLines, BODY_BASELINE_MAX,
 
-                         nullptr);
+                         &FreeSans9pt7b);
 
     }
 

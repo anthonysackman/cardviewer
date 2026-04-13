@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.mana import parse_mana_cost, sort_color_identity
+from app.mana import format_mana_symbols_for_text, parse_mana_cost, sort_color_identity
 
 COMPACT_SCHEMA = 1
 
@@ -59,7 +59,7 @@ def scryfall_card_to_compact(raw: dict) -> dict[str, Any]:
         "color_identity": sort_color_identity(raw.get("color_identity")),
     }
 
-    _panel_field(panel, "oracle_text", raw.get("oracle_text"))
+    _panel_field(panel, "oracle_text", format_mana_symbols_for_text(raw.get("oracle_text")))
     _panel_field(panel, "power", raw.get("power"))
     _panel_field(panel, "toughness", raw.get("toughness"))
     _panel_field(panel, "loyalty", raw.get("loyalty"))

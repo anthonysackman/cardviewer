@@ -1,4 +1,4 @@
-from app.mana import parse_mana_cost, sort_color_identity
+from app.mana import format_mana_symbols_for_text, parse_mana_cost, sort_color_identity
 
 
 def test_parse_mana_cost_empty():
@@ -33,3 +33,16 @@ def test_sort_color_identity_includes_c():
 def test_sort_color_identity_empty():
     assert sort_color_identity(None) == []
     assert sort_color_identity([]) == []
+
+
+def test_format_mana_symbols_for_text_simple_symbols():
+    assert format_mana_symbols_for_text("{B}: Add {G}.") == "(S): Add (F)."
+
+
+def test_format_mana_symbols_for_text_hybrid_and_numeric():
+    got = format_mana_symbols_for_text("Pay {2}{W/U} or {G/P}.")
+    assert got == "Pay (2)(P/I) or (F/P)."
+
+
+def test_format_mana_symbols_for_text_none_passthrough():
+    assert format_mana_symbols_for_text(None) is None
