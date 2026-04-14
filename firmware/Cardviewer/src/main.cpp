@@ -133,7 +133,7 @@ static const int TITLE_LINE_STEP = 20;
 static const int TITLE_MAX_LINES = 3;
 
 static const int BODY_LINE_STEP = 14;
-static const int ORACLE_LINE_STEP = 12;
+static const int ORACLE_LINE_STEP = 14;
 
 static const int BLOCK_GAP = 6;
 
@@ -142,7 +142,7 @@ static const int TITLE_TO_MANA_GAP = 2;
 
 // Footer block pinned to panel bottom.
 static const int FOOTER_SET_BASELINE = EPD_H - 14;
-static const int FOOTER_META_BASELINE = FOOTER_SET_BASELINE - 12;
+static const int FOOTER_META_BASELINE = FOOTER_SET_BASELINE - 14;
 
 static const int FOOTER_LINE_STEP = 12;
 
@@ -1374,11 +1374,13 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen, const S
 
   }
 
-  String releaseYear = "";
+  String releaseDate = "";
   if (panel["released_at"].is<const char *>()) {
     String released = String(panel["released_at"].as<const char *>());
-    if (released.length() >= 4) {
-      releaseYear = released.substring(0, 4);
+    if (released.length() >= 10) {
+      releaseDate = released.substring(0, 10);
+    } else if (released.length() > 0) {
+      releaseDate = released;
     }
   }
 
@@ -1392,11 +1394,11 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen, const S
     footerMeta = "$";
     footerMeta += priceUsd;
   }
-  if (releaseYear.length() > 0) {
+  if (releaseDate.length() > 0) {
     if (footerMeta.length() > 0) {
       footerMeta += " • ";
     }
-    footerMeta += releaseYear;
+    footerMeta += releaseDate;
   }
 
   int nMana = 0;

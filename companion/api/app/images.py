@@ -126,6 +126,58 @@ def _card_content_bbox(img: Image.Image) -> tuple[int, int, int, int]:
     return bbox
 
 
+def _estimate_art_box(img: Image.Image) -> tuple[int, int, int, int]:
+    """Approximate the artwork frame inside the rendered full-card panel."""
+    x0, y0, x1, y1 = _card_content_bbox(img)
+    cw = max(1, x1 - x0)
+    ch = max(1, y1 - y0)
+    # Expanded from previous blend window so the top strip of art is less likely
+    # to render with a different strategy than the rest of the art frame.
+    ax0 = x0 + int(cw * 0.05)
+    ay0 = y0 + int(ch * 0.11)
+    ax1 = x0 + int(cw * 0.95)
+    ay1 = y0 + int(ch * 0.63)
+    # Clamp and guarantee a valid rectangle.
+    ax0 = max(0, min(img.width - 1, ax0))
+    ay0 = max(0, min(img.height - 1, ay0))
+    ax1 = max(ax0 + 1, min(img.width, ax1))
+    ay1 = max(ay0 + 1, min(img.height, ay1))
+    return (ax0, ay0, ax1, ay1)
+
+
+def _hist_percentile(hist: list[int], total: int, pct: float) -> int:
+    if total <= 0:
+        return 0
+    target = int(total * pct)
+    acc = 0
+    for value, count in enumerate(hist):
+        acc += count
+        if acc >= target:
+            return value
+    return 255
+
+
+def _select_auto_profile(base: Image.Image, tuned: Image.Image) -> str:
+    """Pick a deterministic profile from content metrics."""
+    art_box = _estimate_art_box(base)
+    art = tuned.crop(art_box)
+    hist = art.histogram()
+    total = max(1, art.width * art.height)
+    mean = sum(i * h for i, h in enumerate(hist)) / total
+    p10 = _hist_percentile(hist, total, 0.10)
+    p90 = _hist_percentile(hist, total, 0.90)
+    span = p90 - p10
+    edges = _edge_density(art)
+
+    # Dark/low-contrast art keeps detail better with diffusion.
+    if mean < 104 and span < 92:
+        return "photo"
+    # Strongly text/line-heavy cards are cleaner with thresholding.
+    if edges > 0.15 or span < 62:
+        return "text"
+    return "hybrid"
+
+
 def to_display_bw_jpeg(
     source_bytes: bytes,
     *,
@@ -163,8 +215,7 @@ def to_display_bw_image(
     tuned = tuned.filter(ImageFilter.UnsharpMask(radius=1.1, percent=155, threshold=2))
 
     if profile == "auto":
-        # Text-heavy / high-edge cards tend to become snowy with diffusion dithering.
-        profile = "hybrid"
+        profile = _select_auto_profile(base, tuned)
 
     if profile == "photo":
         # Error diffusion preserves tones for painterly/low-contrast artwork.
@@ -181,15 +232,7 @@ def to_display_bw_image(
         dither_mode = dither_enum.FLOYDSTEINBERG if dither_enum else Image.FLOYDSTEINBERG
         art_bw = tuned.convert("1", dither=dither_mode).convert("L")
 
-        x0, y0, x1, y1 = _card_content_bbox(base)
-        cw = max(1, x1 - x0)
-        ch = max(1, y1 - y0)
-        art_box = (
-            x0 + int(cw * 0.06),
-            y0 + int(ch * 0.15),
-            x0 + int(cw * 0.94),
-            y0 + int(ch * 0.58),
-        )
+        art_box = _estimate_art_box(base)
         text_bw.paste(art_bw.crop(art_box), art_box)
         return text_bw.convert("1")
 
