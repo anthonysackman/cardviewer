@@ -34,13 +34,13 @@ def _build_display_proxy_url(request: ValidatedRequest, source_url: str) -> str:
 def _build_display_bw_proxy_url(request: ValidatedRequest, source_url: str) -> str:
     base = f"{request.scheme}://{request.host}"
     encoded = quote(source_url, safe="")
-    return f"{base}/api/scryfall/images/display_bw?src={encoded}&profile=auto"
+    return f"{base}/api/scryfall/images/display_bw?src={encoded}&profile=hybrid"
 
 
 def _build_display_bw_raw_proxy_url(request: ValidatedRequest, source_url: str) -> str:
     base = f"{request.scheme}://{request.host}"
     encoded = quote(source_url, safe="")
-    return f"{base}/api/scryfall/images/display_bw_raw?src={encoded}&profile=auto"
+    return f"{base}/api/scryfall/images/display_bw_raw?src={encoded}&profile=hybrid"
 
 
 def _is_allowed_source_url(source_url: str) -> bool:
