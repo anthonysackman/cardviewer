@@ -10,7 +10,6 @@
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSerifBold12pt7b.h>
-#include <Fonts/Org_01.h>
 
 #include <JPEGDEC.h>
 
@@ -1561,7 +1560,7 @@ void drawCardScreen(const String &json, uint8_t *imgData, size_t imgLen, const S
 
       printWrappedColumn(COL_X, y, oracle, COL_TEXT_W, ORACLE_LINE_STEP, oracleMaxLines, BODY_BASELINE_MAX,
 
-                         &Org_01);
+                         nullptr);
 
     }
 

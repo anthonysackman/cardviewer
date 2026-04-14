@@ -126,6 +126,20 @@ def _card_content_bbox(img: Image.Image) -> tuple[int, int, int, int]:
     return bbox
 
 
+def _estimate_art_box(img: Image.Image) -> tuple[int, int, int, int]:
+    """Estimate the artwork window used for hybrid dithering blend."""
+    x0, y0, x1, y1 = _card_content_bbox(img)
+    cw = max(1, x1 - x0)
+    ch = max(1, y1 - y0)
+    # Restrict dithering to the art frame only:
+    # keep top title/mana bar and lower text box in threshold/text mode.
+    ax0 = x0 + int(cw * 0.06)
+    ay0 = y0 + int(ch * 0.16)
+    ax1 = x0 + int(cw * 0.94)
+    ay1 = y0 + int(ch * 0.62)
+    return (ax0, ay0, ax1, ay1)
+
+
 def to_display_bw_jpeg(
     source_bytes: bytes,
     *,
@@ -181,15 +195,7 @@ def to_display_bw_image(
         dither_mode = dither_enum.FLOYDSTEINBERG if dither_enum else Image.FLOYDSTEINBERG
         art_bw = tuned.convert("1", dither=dither_mode).convert("L")
 
-        x0, y0, x1, y1 = _card_content_bbox(base)
-        cw = max(1, x1 - x0)
-        ch = max(1, y1 - y0)
-        art_box = (
-            x0 + int(cw * 0.06),
-            y0 + int(ch * 0.15),
-            x0 + int(cw * 0.94),
-            y0 + int(ch * 0.58),
-        )
+        art_box = _estimate_art_box(base)
         text_bw.paste(art_bw.crop(art_box), art_box)
         return text_bw.convert("1")
 
